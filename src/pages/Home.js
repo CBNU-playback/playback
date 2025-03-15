@@ -18,6 +18,8 @@ import {
   ListItem,
   ListItemText,
   ListItemSecondaryAction,
+  Modal,
+  TextField,
 } from '@mui/material';
 import {
   PlayArrow,
@@ -70,6 +72,19 @@ const HighlightMarks = ({ highlights, duration }) => {
   }));
 };
 
+// 모달 스타일
+const modalStyle = {
+  position: 'absolute',
+  top: '50%',
+  left: '50%',
+  transform: 'translate(-50%, -50%)',
+  width: 400,
+  bgcolor: 'background.paper',
+  border: '2px solid #000',
+  boxShadow: 24,
+  p: 4,
+};
+
 export default function FootballVideoEditor() {
   const location = useLocation();
   const { videoSrc } = location.state || {}; // AIVideoEditor에서 전달된 videoSrc 받음
@@ -81,6 +96,12 @@ export default function FootballVideoEditor() {
   const videoRef = useRef(null);
   const navigate = useNavigate();
   const [volume, setVolume] = useState(1); // 음량 상태 추가
+  const [open, setOpen] = useState(false);
+  const [customStart, setCustomStart] = useState('');
+  const [customEnd, setCustomEnd] = useState('');
+  const [customHighlights, setCustomHighlights] = useState([]);
+  const [customName, setCustomName] = useState(''); // 이름 상태 추가
+  const [activeHighlightEnd, setActiveHighlightEnd] = useState(null);
 
   const aiHighlights = [
     { id: 1, type: 'Goal Scene', start: 15, end: 35, selected: false },
@@ -111,13 +132,19 @@ export default function FootballVideoEditor() {
     setIsPlaying(!isPlaying);
   };
 
-  const handleSeek = (event, newValue) => {
+  const handleSeek = (event, newValue, endTime) => {
     if (typeof newValue === 'number' && isFinite(newValue)) {
+      console.log('Seeking to:', newValue, 'End at:', endTime);
       setCurrentTime(newValue);
       if (videoRef.current) {
         videoRef.current.currentTime = newValue;
-        videoRef.current.play();
+        videoRef.current.play().catch(error => {
+          console.error('Error playing video:', error);
+        });
         setIsPlaying(true);
+        
+        // 종료 시점 설정
+        setActiveHighlightEnd(endTime);
       }
     }
   };
@@ -144,10 +171,18 @@ export default function FootballVideoEditor() {
   useEffect(() => {
     if (videoRef.current) {
       videoRef.current.ontimeupdate = () => {
-        setCurrentTime(videoRef.current.currentTime);
+        const currentTime = videoRef.current.currentTime;
+        setCurrentTime(currentTime);
+        
+        // 종료 시점에 도달하면 비디오 정지
+        if (activeHighlightEnd && currentTime >= activeHighlightEnd) {
+          videoRef.current.pause();
+          setIsPlaying(false);
+          setActiveHighlightEnd(null); // 종료 시점 초기화
+        }
       };
     }
-  }, []);
+  }, [activeHighlightEnd]);
 
   const handleSaveExport = () => {
     const a = document.createElement('a');
@@ -199,11 +234,31 @@ export default function FootballVideoEditor() {
 
   const toggleHighlightSelection = (highlight) => {
     setSelectedHighlights(prev => {
-      const exists = prev.find(h => h.id === highlight.id);
-      if (exists) {
-        return prev.filter(h => h.id !== highlight.id);
-      } else {
-        return [...prev, highlight];
+      // id가 있는 경우 (AI 하이라이트)
+      if (highlight.id) {
+        const exists = prev.find(h => h.id === highlight.id);
+        if (exists) {
+          return prev.filter(h => h.id !== highlight.id);
+        } else {
+          return [...prev, highlight];
+        }
+      } 
+      // id가 없는 경우 (커스텀 하이라이트)
+      else {
+        const exists = prev.find(h => 
+          h.start === highlight.start && 
+          h.end === highlight.end && 
+          h.name === highlight.name
+        );
+        if (exists) {
+          return prev.filter(h => 
+            h.start !== highlight.start || 
+            h.end !== highlight.end || 
+            h.name !== highlight.name
+          );
+        } else {
+          return [...prev, highlight];
+        }
       }
     });
   };
@@ -265,6 +320,31 @@ export default function FootballVideoEditor() {
     }
   };
 
+  const handleOpen = () => setOpen(true);
+  const handleClose = () => setOpen(false);
+
+  const handleAddCustomHighlight = () => {
+    const start = parseFloat(customStart);
+    const end = parseFloat(customEnd);
+    
+    // 유효한 숫자인지 확인
+    if (isNaN(start) || isNaN(end)) {
+      alert('Please enter valid numbers for start and end times');
+      return;
+    }
+    
+    setCustomHighlights([...customHighlights, { 
+      id: Date.now(), // 고유 ID 추가
+      name: customName, 
+      start: start,
+      end: end
+    }]);
+    setCustomName('');
+    setCustomStart('');
+    setCustomEnd('');
+    handleClose();
+  };
+
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
       <AppBar position="static" elevation={0}>
@@ -295,12 +375,12 @@ export default function FootballVideoEditor() {
             <video
               ref={videoRef}
               src={videoSrc}
-              
               width="100%"
               style={{ aspectRatio: '16/9', backgroundColor: 'black', marginBottom: '16px' }}
               onLoadedMetadata={() => {
                 if (videoRef.current) {
-                  setVideoDuration(videoRef.current.duration); // 동영상 길이 설정
+                  console.log('Video loaded, duration:', videoRef.current.duration);
+                  setVideoDuration(videoRef.current.duration);
                 }
               }}
               onError={(e) => {
@@ -323,7 +403,7 @@ export default function FootballVideoEditor() {
             </IconButton>
             <CustomSlider
               value={currentTime}
-              onChange={handleSeek}
+              onChange={(event, newValue) => handleSeek(event, newValue, null)}
               min={0}
               max={videoDuration}
               marks={HighlightMarks({ 
@@ -354,22 +434,34 @@ export default function FootballVideoEditor() {
             <Box>
               <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
                 <Typography variant="h6">Match Timeline</Typography>
-                <Button startIcon={<Add />}>
+                <Button startIcon={<Add />} onClick={handleOpen}>
                   Add Custom Highlight
                 </Button>
               </Box>
-              <Box sx={{ height: 100, bgcolor: 'grey.200', position: 'relative', mb: 2 }}>
+              <Box sx={{ height: 80, bgcolor: 'grey.200', position: 'relative', mb: 2 }}>
                 {aiHighlights.map((highlight, index) => (
                   <Box
-                    key={index}
+                    key={`ai-${index}`}
                     sx={{
                       position: 'absolute',
                       left: `${(highlight.start / videoDuration) * 100}%`,
                       width: `${((highlight.end - highlight.start) / videoDuration) * 100}%`,
                       height: '100%',
-                      bgcolor: '#ff9800', // 노란색
+                      bgcolor: '#1976D2',
                       opacity: 0.7,
-                      borderRadius: 1,
+                    }}
+                  />
+                ))}
+                {customHighlights.map((highlight, index) => (
+                  <Box
+                    key={`custom-${index}`}
+                    sx={{
+                      position: 'absolute',
+                      left: `${(highlight.start / videoDuration) * 100}%`,
+                      width: `${((highlight.end - highlight.start) / videoDuration) * 100}%`,
+                      height: '100%',
+                      bgcolor: '#345DA7',
+                      opacity: 0.7,
                     }}
                   />
                 ))}
@@ -416,7 +508,13 @@ export default function FootballVideoEditor() {
                         secondary={`${formatTime(highlight.start)} - ${formatTime(highlight.end)}`}
                       />
                       <ListItemSecondaryAction>
-                        <IconButton edge="end" aria-label="play" onClick={() => handleSeek(null, highlight.start)}>
+                        <IconButton 
+                          edge="end" 
+                          onClick={() => {
+                            console.log('Highlight Start:', highlight.start);
+                            handleSeek(undefined, highlight.start, highlight.end);
+                          }}
+                        >
                           <PlayArrow />
                         </IconButton>
                       </ListItemSecondaryAction>
@@ -429,7 +527,7 @@ export default function FootballVideoEditor() {
 
         <Box sx={{ width: 300, p: 3, borderLeft: 1, borderColor: 'divider' }}>
           <Typography variant="h6" gutterBottom>
-            AI Detected Highlights
+            Detected Highlights
           </Typography>
           <List>
             {aiHighlights.map((highlight) => (
@@ -458,7 +556,52 @@ export default function FootballVideoEditor() {
                   </IconButton>
                   <IconButton 
                     edge="end" 
-                    onClick={() => handleSeek(null, highlight.start)}
+                    onClick={() => {
+                      console.log('Highlight Start:', highlight.start);
+                      handleSeek(undefined, highlight.start, highlight.end);
+                    }}
+                  >
+                    <PlayArrow />
+                  </IconButton>
+                </ListItemSecondaryAction>
+              </ListItem>
+            ))}
+          </List>
+
+          <Typography variant="h6" gutterBottom>
+            Custom Highlights
+          </Typography>
+          <List>
+            {customHighlights.map((highlight, index) => (
+              <ListItem 
+                key={index}
+                sx={{
+                  bgcolor: selectedHighlights.find(h => h.start === highlight.start && h.end === highlight.end) 
+                    ? 'action.selected' 
+                    : 'transparent',
+                  borderRadius: 1,
+                  mb: 1
+                }}
+              >
+                <ListItemText
+                  primary={highlight.name || `Custom Highlight ${index + 1}`}
+                  secondary={`${formatTime(highlight.start)} - ${formatTime(highlight.end)}`}
+                />
+                <ListItemSecondaryAction>
+                  <IconButton 
+                    edge="end" 
+                    onClick={() => toggleHighlightSelection(highlight)}
+                  >
+                    {selectedHighlights.find(h => h.start === highlight.start && h.end === highlight.end) 
+                      ? <CheckCircle color="primary" /> 
+                      : <RadioButtonUnchecked />}
+                  </IconButton>
+                  <IconButton 
+                    edge="end" 
+                    onClick={() => {
+                      console.log('Highlight Start:', highlight.start);
+                      handleSeek(undefined, highlight.start, highlight.end);
+                    }}
                   >
                     <PlayArrow />
                   </IconButton>
@@ -478,6 +621,43 @@ export default function FootballVideoEditor() {
           </Button>
         </Box>
       </Box>
+      <Modal
+        open={open}
+        onClose={handleClose}
+        aria-labelledby="modal-title"
+        aria-describedby="modal-description"
+      >
+        <Box sx={modalStyle}>
+          <Typography id="modal-title" variant="h6" component="h2">
+            Add Custom Highlight
+          </Typography>
+          <TextField
+            label="Highlight Name"
+            value={customName}
+            onChange={(e) => setCustomName(e.target.value)}
+            fullWidth
+            margin="normal"
+          />
+          <TextField
+            label="Start Time (seconds)"
+            value={customStart}
+            onChange={(e) => setCustomStart(e.target.value)}
+            fullWidth
+            margin="normal"
+          />
+          <TextField
+            label="End Time (seconds)"
+            value={customEnd}
+            onChange={(e) => setCustomEnd(e.target.value)}
+            fullWidth
+            margin="normal"
+          />
+          <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 2 }}>
+            <Button onClick={handleClose} sx={{ mr: 1 }}>Cancel</Button>
+            <Button variant="contained" onClick={handleAddCustomHighlight}>Add</Button>
+          </Box>
+        </Box>
+      </Modal>
     </Box>
   );
 }
