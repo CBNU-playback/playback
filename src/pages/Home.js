@@ -57,7 +57,7 @@ const HighlightMarks = ({ highlights, duration }) => {
     value: highlight.start,
     label: '',
     style: {
-      backgroundColor: '#ff9800',
+      backgroundColor: '#1976D2',
       width: `${((highlight.end - highlight.start) / duration) * 100}%`,
       height: '8px',
       position: 'absolute',
@@ -80,6 +80,7 @@ export default function FootballVideoEditor() {
   const [selectedPlayer, setSelectedPlayer] = useState('');
   const videoRef = useRef(null);
   const navigate = useNavigate();
+  const [volume, setVolume] = useState(1); // 음량 상태 추가
 
   const aiHighlights = [
     { id: 1, type: 'Goal Scene', start: 15, end: 35, selected: false },
@@ -115,6 +116,8 @@ export default function FootballVideoEditor() {
       setCurrentTime(newValue);
       if (videoRef.current) {
         videoRef.current.currentTime = newValue;
+        videoRef.current.play();
+        setIsPlaying(true);
       }
     }
   };
@@ -129,6 +132,13 @@ export default function FootballVideoEditor() {
 
   const handleTabChange = (event, newValue) => {
     setTabValue(newValue);
+  };
+
+  const handleVolumeChange = (event, newValue) => {
+    setVolume(newValue);
+    if (videoRef.current) {
+      videoRef.current.volume = newValue;
+    }
   };
 
   useEffect(() => {
@@ -285,7 +295,7 @@ export default function FootballVideoEditor() {
             <video
               ref={videoRef}
               src={videoSrc}
-              controls
+              
               width="100%"
               style={{ aspectRatio: '16/9', backgroundColor: 'black', marginBottom: '16px' }}
               onLoadedMetadata={() => {
@@ -317,7 +327,7 @@ export default function FootballVideoEditor() {
               min={0}
               max={videoDuration}
               marks={HighlightMarks({ 
-                highlights: selectedHighlights, 
+                highlights: aiHighlights,
                 duration: videoDuration 
               })}
               sx={{ mx: 2, flexGrow: 1 }}
@@ -325,6 +335,14 @@ export default function FootballVideoEditor() {
             <Typography variant="body2">
               {formatTime(currentTime)} / {formatTime(videoDuration)}
             </Typography>
+            <CustomSlider
+              value={volume}
+              onChange={handleVolumeChange}
+              min={0}
+              max={1}
+              step={0.01}
+              sx={{ width: 100, ml: 2 }}
+            />
           </Box>
 
           <Tabs value={tabValue} onChange={handleTabChange} sx={{ mb: 2 }}>
@@ -340,7 +358,22 @@ export default function FootballVideoEditor() {
                   Add Custom Highlight
                 </Button>
               </Box>
-              <Box sx={{ height: 100, bgcolor: 'grey.200', position: 'relative', mb: 2 }} />
+              <Box sx={{ height: 100, bgcolor: 'grey.200', position: 'relative', mb: 2 }}>
+                {aiHighlights.map((highlight, index) => (
+                  <Box
+                    key={index}
+                    sx={{
+                      position: 'absolute',
+                      left: `${(highlight.start / videoDuration) * 100}%`,
+                      width: `${((highlight.end - highlight.start) / videoDuration) * 100}%`,
+                      height: '100%',
+                      bgcolor: '#ff9800', // 노란색
+                      opacity: 0.7,
+                      borderRadius: 1,
+                    }}
+                  />
+                ))}
+              </Box>
               <List>
                 {userEdits.map((edit, index) => (
                   <ListItem key={index}>
@@ -425,7 +458,7 @@ export default function FootballVideoEditor() {
                   </IconButton>
                   <IconButton 
                     edge="end" 
-                    onClick={() => handleSeek(highlight.start)}
+                    onClick={() => handleSeek(null, highlight.start)}
                   >
                     <PlayArrow />
                   </IconButton>
