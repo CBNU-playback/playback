@@ -87,7 +87,7 @@ const modalStyle = {
 
 export default function FootballVideoEditor() {
   const location = useLocation();
-  const { videoSrc } = location.state || {}; // AIVideoEditor에서 전달된 videoSrc 받음
+  const { videoSrc, fileId } = location.state || {};
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [videoDuration, setVideoDuration] = useState(0); // videoDuration을 상태로 설정
@@ -268,58 +268,43 @@ export default function FootballVideoEditor() {
       alert('Please select at least one highlight');
       return;
     }
-
+  
     try {
-      // 선택된 하이라이트를 시간순으로 정렬
-      const sortedHighlights = selectedHighlights.sort((a, b) => a.start - b.start);
-      
-      // MediaRecorder 설정
-      const stream = videoRef.current.captureStream();
-      const mediaRecorder = new MediaRecorder(stream, {
-        mimeType: 'video/webm'
+      // 정렬된 하이라이트 구간
+      const sortedHighlights = selectedHighlights
+        .map(h => ({ start: h.start, end: h.end }))
+        .sort((a, b) => a.start - b.start);
+  
+      const response = await fetch('http://localhost:8000/api/export-highlights/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          videoName: fileId, // MainPage에서 전달된 서버 저장 파일명
+          ranges: sortedHighlights, // [{start: 10, end: 20}, {start: 40, end: 60}]
+        }),
       });
-
-      const chunks = [];
-      mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
-      mediaRecorder.onstop = () => {
-        const blob = new Blob(chunks, { type: 'video/mp4' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'highlights.mp4';
-        a.click();
-        URL.revokeObjectURL(url);
-      };
-
-      // 녹화 시작
-      mediaRecorder.start();
-
-      // 각 하이라이트 구간 처리
-      for (const highlight of sortedHighlights) {
-        // 비디오 시간을 하이라이트 시작 지점으로 이동
-        videoRef.current.currentTime = highlight.start;
-        await new Promise(resolve => {
-          videoRef.current.onseeked = () => {
-            // 하이라이트 구간 재생
-            videoRef.current.play();
-            setTimeout(() => {
-              videoRef.current.pause();
-              resolve();
-            }, (highlight.end - highlight.start) * 1000);
-          };
-        });
+  
+      if (!response.ok) {
+        throw new Error('Failed to export video');
       }
-
-      // 녹화 종료
-      mediaRecorder.stop();
-      videoRef.current.currentTime = 0; // 비디오를 처음으로 되돌림
-
+  
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'exported_highlights.mp4';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
     } catch (error) {
       console.error('Error exporting highlights:', error);
       alert('Failed to export highlights. Please try again.');
     }
   };
-
+  
   const handleOpen = () => setOpen(true);
   const handleClose = () => setOpen(false);
 
