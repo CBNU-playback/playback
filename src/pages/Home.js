@@ -35,6 +35,8 @@ import {
   RadioButtonUnchecked,
 } from '@mui/icons-material';
 import { styled } from '@mui/material/styles';
+import axios from 'axios';
+
 
 const CustomSlider = styled(Slider)(({ theme }) => ({
   '& .MuiSlider-rail': {
@@ -54,7 +56,7 @@ const CustomSlider = styled(Slider)(({ theme }) => ({
 
 const HighlightMarks = ({ highlights, duration }) => {
   if (!highlights || !duration) return [];
-  
+
   return highlights.map((highlight) => ({
     value: highlight.start,
     label: '',
@@ -102,6 +104,7 @@ export default function FootballVideoEditor() {
   const [customHighlights, setCustomHighlights] = useState([]);
   const [customName, setCustomName] = useState(''); // 이름 상태 추가
   const [activeHighlightEnd, setActiveHighlightEnd] = useState(null);
+  const fileInputRef = useRef(null);  // input 참조용
 
   const aiHighlights = [
     { id: 1, type: 'Goal Scene', start: 15, end: 35, selected: false },
@@ -142,7 +145,7 @@ export default function FootballVideoEditor() {
           console.error('Error playing video:', error);
         });
         setIsPlaying(true);
-        
+
         // 종료 시점 설정
         setActiveHighlightEnd(endTime);
       }
@@ -173,7 +176,7 @@ export default function FootballVideoEditor() {
       videoRef.current.ontimeupdate = () => {
         const currentTime = videoRef.current.currentTime;
         setCurrentTime(currentTime);
-        
+
         // 종료 시점에 도달하면 비디오 정지
         if (activeHighlightEnd && currentTime >= activeHighlightEnd) {
           videoRef.current.pause();
@@ -190,47 +193,6 @@ export default function FootballVideoEditor() {
     a.download = 'exported-video.mp4'; // 저장할 파일 이름
     a.click();
   };
-  const openPreviewWindow = () => {
-    const previewWindow = window.open(
-      '',
-      'VideoPreview',
-      'width=800,height=600'
-    );
-
-    previewWindow.document.write(`
-      <html>
-        <head>
-          <title>Video Preview</title>
-          <style>
-            body { display: flex; flex-direction: column; align-items: center; justify-content: center; font-family: Arial, sans-serif; margin: 0; }
-            .video-container { max-width: 100%; max-height: 80%; }
-            .button-group { margin-top: 20px; display: flex; gap: 10px; }
-          </style>
-        </head>
-        <body>
-          <div class="video-container">
-            <video id="previewVideo" controls width="600" src="${videoSrc}"></video>
-          </div>
-          <div class="button-group">
-            <button id="saveButton">Download</button>
-            <button id="continueButton">Cancle</button>
-          </div>
-          <script>
-            document.getElementById('saveButton').addEventListener('click', function() {
-              const link = document.createElement('a');
-              link.href = '${videoSrc}';
-              link.download = 'edited-video.mp4';
-              link.click();
-            });
-
-            document.getElementById('continueButton').addEventListener('click', function() {
-              window.close();
-            });
-          </script>
-        </body>
-      </html>
-    `);
-  };
 
   const toggleHighlightSelection = (highlight) => {
     setSelectedHighlights(prev => {
@@ -242,18 +204,18 @@ export default function FootballVideoEditor() {
         } else {
           return [...prev, highlight];
         }
-      } 
+      }
       // id가 없는 경우 (커스텀 하이라이트)
       else {
-        const exists = prev.find(h => 
-          h.start === highlight.start && 
-          h.end === highlight.end && 
+        const exists = prev.find(h =>
+          h.start === highlight.start &&
+          h.end === highlight.end &&
           h.name === highlight.name
         );
         if (exists) {
-          return prev.filter(h => 
-            h.start !== highlight.start || 
-            h.end !== highlight.end || 
+          return prev.filter(h =>
+            h.start !== highlight.start ||
+            h.end !== highlight.end ||
             h.name !== highlight.name
           );
         } else {
@@ -268,13 +230,13 @@ export default function FootballVideoEditor() {
       alert('Please select at least one highlight');
       return;
     }
-  
+
     try {
       // 정렬된 하이라이트 구간
       const sortedHighlights = selectedHighlights
         .map(h => ({ start: h.start, end: h.end }))
         .sort((a, b) => a.start - b.start);
-  
+
       const response = await fetch('http://localhost:8000/api/export-highlights/', {
         method: 'POST',
         headers: {
@@ -285,11 +247,11 @@ export default function FootballVideoEditor() {
           ranges: sortedHighlights, // [{start: 10, end: 20}, {start: 40, end: 60}]
         }),
       });
-  
+
       if (!response.ok) {
         throw new Error('Failed to export video');
       }
-  
+
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -304,23 +266,23 @@ export default function FootballVideoEditor() {
       alert('Failed to export highlights. Please try again.');
     }
   };
-  
+
   const handleOpen = () => setOpen(true);
   const handleClose = () => setOpen(false);
 
   const handleAddCustomHighlight = () => {
     const start = parseFloat(customStart);
     const end = parseFloat(customEnd);
-    
+
     // 유효한 숫자인지 확인
     if (isNaN(start) || isNaN(end)) {
       alert('Please enter valid numbers for start and end times');
       return;
     }
-    
-    setCustomHighlights([...customHighlights, { 
+
+    setCustomHighlights([...customHighlights, {
       id: Date.now(), // 고유 ID 추가
-      name: customName, 
+      name: customName,
       start: start,
       end: end
     }]);
@@ -329,28 +291,59 @@ export default function FootballVideoEditor() {
     setCustomEnd('');
     handleClose();
   };
+  const handleNewVideoUploadClick = () => {
+    fileInputRef.current.click(); // 숨겨진 input 클릭
+  };
+
+  const handleNewFileChange = async (event) => {
+    const file = event.target.files[0];
+    if (file) {
+      const url = URL.createObjectURL(file);
+
+      const formData = new FormData();
+      formData.append('file', file);
+
+      try {
+        const response = await axios.post('http://localhost:8000/api/upload/', formData, {
+          headers: {
+            'Content-Type': 'multipart/form-data',
+          },
+        });
+        console.log('New video upload success:', response.data);
+
+        // 새로 업로드된 파일로 /edit 페이지 새로 이동
+        navigate('/edit', { state: { videoSrc: url, fileId: response.data.file_id } });
+      } catch (error) {
+        console.error('Error uploading new video:', error);
+      }
+    }
+  };
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
       <AppBar position="static" elevation={0}>
         <Toolbar>
-          <Typography 
-            variant="h6" 
-            component="div" 
-            sx={{ 
-              flexGrow: 1, 
-              cursor: 'pointer' 
+          <Typography
+            variant="h6"
+            component="div"
+            sx={{
+              flexGrow: 1,
+              cursor: 'pointer'
             }}
             onClick={() => navigate('/')}
           >
             AI Sports Editor
           </Typography>
-          <Button startIcon={<CloudUpload />}>
+          <Button startIcon={<CloudUpload />} onClick={handleNewVideoUploadClick}>
             Upload New Video
           </Button>
-          <Button startIcon={<Save />} onClick={openPreviewWindow}>
-            Preview & Download
-          </Button>
+          <input
+            type="file"
+            accept="video/*"
+            ref={fileInputRef}
+            style={{ display: 'none' }}
+            onChange={handleNewFileChange}
+          />
         </Toolbar>
       </AppBar>
 
@@ -391,9 +384,9 @@ export default function FootballVideoEditor() {
               onChange={(event, newValue) => handleSeek(event, newValue, null)}
               min={0}
               max={videoDuration}
-              marks={HighlightMarks({ 
+              marks={HighlightMarks({
                 highlights: aiHighlights,
-                duration: videoDuration 
+                duration: videoDuration
               })}
               sx={{ mx: 2, flexGrow: 1 }}
             />
@@ -493,8 +486,8 @@ export default function FootballVideoEditor() {
                         secondary={`${formatTime(highlight.start)} - ${formatTime(highlight.end)}`}
                       />
                       <ListItemSecondaryAction>
-                        <IconButton 
-                          edge="end" 
+                        <IconButton
+                          edge="end"
                           onClick={() => {
                             console.log('Highlight Start:', highlight.start);
                             handleSeek(undefined, highlight.start, highlight.end);
@@ -516,11 +509,11 @@ export default function FootballVideoEditor() {
           </Typography>
           <List>
             {aiHighlights.map((highlight) => (
-              <ListItem 
+              <ListItem
                 key={highlight.id}
                 sx={{
-                  bgcolor: selectedHighlights.find(h => h.id === highlight.id) 
-                    ? 'action.selected' 
+                  bgcolor: selectedHighlights.find(h => h.id === highlight.id)
+                    ? 'action.selected'
                     : 'transparent',
                   borderRadius: 1,
                   mb: 1
@@ -531,16 +524,16 @@ export default function FootballVideoEditor() {
                   secondary={`${formatTime(highlight.start)} - ${formatTime(highlight.end)}`}
                 />
                 <ListItemSecondaryAction>
-                  <IconButton 
-                    edge="end" 
+                  <IconButton
+                    edge="end"
                     onClick={() => toggleHighlightSelection(highlight)}
                   >
-                    {selectedHighlights.find(h => h.id === highlight.id) 
-                      ? <CheckCircle color="primary" /> 
+                    {selectedHighlights.find(h => h.id === highlight.id)
+                      ? <CheckCircle color="primary" />
                       : <RadioButtonUnchecked />}
                   </IconButton>
-                  <IconButton 
-                    edge="end" 
+                  <IconButton
+                    edge="end"
                     onClick={() => {
                       console.log('Highlight Start:', highlight.start);
                       handleSeek(undefined, highlight.start, highlight.end);
@@ -558,11 +551,11 @@ export default function FootballVideoEditor() {
           </Typography>
           <List>
             {customHighlights.map((highlight, index) => (
-              <ListItem 
+              <ListItem
                 key={index}
                 sx={{
-                  bgcolor: selectedHighlights.find(h => h.start === highlight.start && h.end === highlight.end) 
-                    ? 'action.selected' 
+                  bgcolor: selectedHighlights.find(h => h.start === highlight.start && h.end === highlight.end)
+                    ? 'action.selected'
                     : 'transparent',
                   borderRadius: 1,
                   mb: 1
@@ -573,16 +566,16 @@ export default function FootballVideoEditor() {
                   secondary={`${formatTime(highlight.start)} - ${formatTime(highlight.end)}`}
                 />
                 <ListItemSecondaryAction>
-                  <IconButton 
-                    edge="end" 
+                  <IconButton
+                    edge="end"
                     onClick={() => toggleHighlightSelection(highlight)}
                   >
-                    {selectedHighlights.find(h => h.start === highlight.start && h.end === highlight.end) 
-                      ? <CheckCircle color="primary" /> 
+                    {selectedHighlights.find(h => h.start === highlight.start && h.end === highlight.end)
+                      ? <CheckCircle color="primary" />
                       : <RadioButtonUnchecked />}
                   </IconButton>
-                  <IconButton 
-                    edge="end" 
+                  <IconButton
+                    edge="end"
                     onClick={() => {
                       console.log('Highlight Start:', highlight.start);
                       handleSeek(undefined, highlight.start, highlight.end);
