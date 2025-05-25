@@ -89,7 +89,7 @@ const modalStyle = {
 
 export default function FootballVideoEditor() {
   const location = useLocation();
-  const { videoSrc, fileId } = location.state || {};
+  const { videoSrc, fileId, aiHighlights, highlights } = location.state || {};
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [videoDuration, setVideoDuration] = useState(0); // videoDuration을 상태로 설정
@@ -99,20 +99,26 @@ export default function FootballVideoEditor() {
   const navigate = useNavigate();
   const [volume, setVolume] = useState(1); // 음량 상태 추가
   const [open, setOpen] = useState(false);
-  const [customStart, setCustomStart] = useState('');
-  const [customEnd, setCustomEnd] = useState('');
+  const [customStartHour, setCustomStartHour] = useState('');
+  const [customStartMinute, setCustomStartMinute] = useState('');
+  const [customStartSecond, setCustomStartSecond] = useState('');
+  const [customEndHour, setCustomEndHour] = useState('');
+  const [customEndMinute, setCustomEndMinute] = useState('');
+  const [customEndSecond, setCustomEndSecond] = useState('');
   const [customHighlights, setCustomHighlights] = useState([]);
   const [customName, setCustomName] = useState(''); // 이름 상태 추가
   const [activeHighlightEnd, setActiveHighlightEnd] = useState(null);
   const fileInputRef = useRef(null);  // input 참조용
-
-  const aiHighlights = [
-    { id: 1, type: 'Goal Scene', start: 15, end: 35, selected: false },
-    { id: 2, type: 'Free Kick', start: 50, end: 60, selected: false },
-    { id: 3, type: 'Penalty Kick', start: 245, end: 265, selected: false },
-    { id: 4, type: 'Yellow Card', start: 380, end: 395, selected: false },
-    { id: 5, type: 'Corner Kick', start: 450, end: 470, selected: false }
-  ];
+  const [detectedHighlights, setDetectedHighlights] = useState({
+    Goals: [],
+    Shoot: [],
+    FreeKicks: [],
+    Fouls: []
+  });
+  const [isLoading, setIsLoading] = useState(false); // 로딩 상태 추가
+  const [loadingMessage, setLoadingMessage] = useState(''); // 로딩 메시지 추가
+  const [isExporting, setIsExporting] = useState(false); // export 로딩 상태
+  const [exportMessage, setExportMessage] = useState(''); // export 메시지
 
   const [userEdits, setUserEdits] = useState([
     { start: 1800, end: 1830, note: 'Great dribble' },
@@ -187,6 +193,32 @@ export default function FootballVideoEditor() {
     }
   }, [activeHighlightEnd]);
 
+  useEffect(() => {
+    if (aiHighlights && Array.isArray(aiHighlights)) {
+      setDetectedHighlights({
+        Goals: aiHighlights.map((h, idx) => ({
+          ...h,
+          type: 'Goal Scene',
+          id: h.id || idx + 1,
+        })),
+        Shoot: [],
+        FreeKicks: [],
+        Fouls: []
+      });
+    } else if (highlights && Array.isArray(highlights)) {
+      setDetectedHighlights({
+        Goals: highlights.map((h, idx) => ({
+          ...h,
+          type: 'Goal Scene',
+          id: h.id || idx + 1,
+        })),
+        Shoot: [],
+        FreeKicks: [],
+        Fouls: []
+      });
+    }
+  }, [aiHighlights, highlights]);
+
   const handleSaveExport = () => {
     const a = document.createElement('a');
     a.href = videoSrc; // videoSrc가 이미 Blob URL이므로 그대로 사용
@@ -194,35 +226,32 @@ export default function FootballVideoEditor() {
     a.click();
   };
 
-  const toggleHighlightSelection = (highlight) => {
+  const toggleHighlightSelection = (category, highlight) => {
     setSelectedHighlights(prev => {
-      // id가 있는 경우 (AI 하이라이트)
-      if (highlight.id) {
-        const exists = prev.find(h => h.id === highlight.id);
-        if (exists) {
-          return prev.filter(h => h.id !== highlight.id);
-        } else {
-          return [...prev, highlight];
-        }
-      }
-      // id가 없는 경우 (커스텀 하이라이트)
-      else {
-        const exists = prev.find(h =>
-          h.start === highlight.start &&
-          h.end === highlight.end &&
-          h.name === highlight.name
-        );
-        if (exists) {
-          return prev.filter(h =>
-            h.start !== highlight.start ||
-            h.end !== highlight.end ||
-            h.name !== highlight.name
-          );
-        } else {
-          return [...prev, highlight];
-        }
+      const exists = prev.find(h => h.category === category && h.id === highlight.id);
+      if (exists) {
+        return prev.filter(h => !(h.category === category && h.id === highlight.id));
+      } else {
+        return [...prev, { ...highlight, category }];
       }
     });
+  };
+
+  const handleDeleteHighlight = (category, highlightId) => {
+    setDetectedHighlights(prev => ({
+      ...prev,
+      [category]: prev[category].filter(h => h.id !== highlightId)
+    }));
+    setSelectedHighlights(prev => prev.filter(h => !(h.category === category && h.id === highlightId)));
+  };
+
+  const handlePlayHighlight = (highlight) => {
+    if (videoRef.current) {
+      videoRef.current.currentTime = highlight.start;
+      videoRef.current.play();
+      setIsPlaying(true);
+      setActiveHighlightEnd(highlight.end);
+    }
   };
 
   const handleExportSelected = async () => {
@@ -230,38 +259,51 @@ export default function FootballVideoEditor() {
       alert('Please select at least one highlight');
       return;
     }
-
     try {
-      // 정렬된 하이라이트 구간
+      setIsExporting(true);
+      setExportMessage('영상 편집 중입니다. 잠시만 기다려주세요...');
+      // 선택된 하이라이트만 start, end 추출해서 정렬
       const sortedHighlights = selectedHighlights
         .map(h => ({ start: h.start, end: h.end }))
         .sort((a, b) => a.start - b.start);
-
-      const response = await fetch('http://localhost:8000/api/export-highlights/', {
+      const response = await fetch('http://172.17.174.197:8000/api/export-highlights/', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
           videoName: fileId, // MainPage에서 전달된 서버 저장 파일명
-          ranges: sortedHighlights, // [{start: 10, end: 20}, {start: 40, end: 60}]
+          ranges: sortedHighlights, // [{start: 10, end: 20}, ...] 선택된 것만
         }),
       });
-
       if (!response.ok) {
+        setExportMessage('영상 편집에 실패했습니다.');
+        setIsExporting(false);
         throw new Error('Failed to export video');
       }
-
       const blob = await response.blob();
+      let filename = 'exported_highlights.mp4';
+      const disposition = response.headers.get('Content-Disposition');
+      if (disposition && disposition.indexOf('filename=') !== -1) {
+        filename = disposition
+          .split('filename=')[1]
+          .replace(/['"]/g, '')
+          .trim();
+      }
+      setExportMessage('다운로드를 시작합니다!');
+      setIsExporting(false);
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = 'exported_highlights.mp4';
+      a.download = filename;
       document.body.appendChild(a);
       a.click();
       a.remove();
       window.URL.revokeObjectURL(url);
+      setTimeout(() => setExportMessage(''), 2000);
     } catch (error) {
+      setExportMessage('영상 편집에 실패했습니다.');
+      setIsExporting(false);
       console.error('Error exporting highlights:', error);
       alert('Failed to export highlights. Please try again.');
     }
@@ -271,12 +313,18 @@ export default function FootballVideoEditor() {
   const handleClose = () => setOpen(false);
 
   const handleAddCustomHighlight = () => {
-    const start = parseFloat(customStart);
-    const end = parseFloat(customEnd);
+    // 시, 분, 초를 초 단위로 변환
+    const start =
+      (parseInt(customStartHour || '0', 10) * 3600) +
+      (parseInt(customStartMinute || '0', 10) * 60) +
+      (parseInt(customStartSecond || '0', 10));
+    const end =
+      (parseInt(customEndHour || '0', 10) * 3600) +
+      (parseInt(customEndMinute || '0', 10) * 60) +
+      (parseInt(customEndSecond || '0', 10));
 
-    // 유효한 숫자인지 확인
-    if (isNaN(start) || isNaN(end)) {
-      alert('Please enter valid numbers for start and end times');
+    if (isNaN(start) || isNaN(end) || start >= end) {
+      alert('올바른 시작/종료 시간을 입력하세요. (시작 < 종료)');
       return;
     }
 
@@ -287,8 +335,8 @@ export default function FootballVideoEditor() {
       end: end
     }]);
     setCustomName('');
-    setCustomStart('');
-    setCustomEnd('');
+    setCustomStartHour(''); setCustomStartMinute(''); setCustomStartSecond('');
+    setCustomEndHour(''); setCustomEndMinute(''); setCustomEndSecond('');
     handleClose();
   };
   const handleNewVideoUploadClick = () => {
@@ -299,22 +347,39 @@ export default function FootballVideoEditor() {
     const file = event.target.files[0];
     if (file) {
       const url = URL.createObjectURL(file);
-
       const formData = new FormData();
       formData.append('file', file);
-
       try {
-        const response = await axios.post('http://localhost:8000/api/upload/', formData, {
-          headers: {
-            'Content-Type': 'multipart/form-data',
-          },
+        setIsLoading(true);
+        setLoadingMessage('영상 업로드 및 분석 중...');
+        // 업로드 + 분석
+        const uploadResponse = await axios.post('http://172.17.174.197:8000/api/upload/', formData, {
+          headers: { 'Content-Type': 'multipart/form-data' },
         });
-        console.log('New video upload success:', response.data);
-
-        // 새로 업로드된 파일로 /edit 페이지 새로 이동
-        navigate('/edit', { state: { videoSrc: url, fileId: response.data.file_id } });
+        // 반환된 highlights만 사용, Goals에만 넣기
+        if (uploadResponse.data && Array.isArray(uploadResponse.data.highlights)) {
+          setDetectedHighlights({
+            Goals: uploadResponse.data.highlights.map((h, idx) => ({
+              ...h,
+              type: 'Goal Scene',
+              id: h.id || idx + 1,
+            })),
+            Shoot: [],
+            FreeKicks: [],
+            Fouls: []
+          });
+        } else {
+          setDetectedHighlights({ Goals: [], Shoot: [], FreeKicks: [], Fouls: [] });
+        }
+        setLoadingMessage('완료!');
+        setTimeout(() => setLoadingMessage(''), 1000);
+        setIsLoading(false);
+        // 필요하다면 navigate로 넘길 때도 highlights만 넘김
+        // navigate('/edit', { state: { videoSrc: url, fileId: uploadResponse.data.file_id, highlights } });
       } catch (error) {
-        console.error('Error uploading new video:', error);
+        setLoadingMessage('오류 발생!');
+        setIsLoading(false);
+        console.error('Error uploading/analyzing new video:', error);
       }
     }
   };
@@ -334,9 +399,14 @@ export default function FootballVideoEditor() {
           >
             AI Sports Editor
           </Typography>
-          <Button startIcon={<CloudUpload />} onClick={handleNewVideoUploadClick}>
+          <Button startIcon={<CloudUpload />} onClick={handleNewVideoUploadClick} disabled={isLoading}>
             Upload New Video
           </Button>
+          {isLoading && (
+            <Typography variant="body2" color="primary" sx={{ ml: 2 }}>
+              {loadingMessage}
+            </Typography>
+          )}
           <input
             type="file"
             accept="video/*"
@@ -385,7 +455,7 @@ export default function FootballVideoEditor() {
               min={0}
               max={videoDuration}
               marks={HighlightMarks({
-                highlights: aiHighlights,
+                highlights: detectedHighlights.Goals,
                 duration: videoDuration
               })}
               sx={{ mx: 2, flexGrow: 1 }}
@@ -417,7 +487,7 @@ export default function FootballVideoEditor() {
                 </Button>
               </Box>
               <Box sx={{ height: 80, bgcolor: 'grey.200', position: 'relative', mb: 2 }}>
-                {aiHighlights.map((highlight, index) => (
+                {detectedHighlights.Goals.map((highlight, index) => (
                   <Box
                     key={`ai-${index}`}
                     sx={{
@@ -477,7 +547,7 @@ export default function FootballVideoEditor() {
                 </Select>
               </FormControl>
               <List>
-                {aiHighlights
+                {detectedHighlights.Goals
                   .filter((highlight) => highlight.player.toLowerCase() === selectedPlayer.replace('-', ' '))
                   .map((highlight, index) => (
                     <ListItem key={index}>
@@ -507,44 +577,41 @@ export default function FootballVideoEditor() {
           <Typography variant="h6" gutterBottom>
             Detected Highlights
           </Typography>
-          <List>
-            {aiHighlights.map((highlight) => (
-              <ListItem
-                key={highlight.id}
-                sx={{
-                  bgcolor: selectedHighlights.find(h => h.id === highlight.id)
-                    ? 'action.selected'
-                    : 'transparent',
-                  borderRadius: 1,
-                  mb: 1
-                }}
-              >
-                <ListItemText
-                  primary={highlight.type}
-                  secondary={`${formatTime(highlight.start)} - ${formatTime(highlight.end)}`}
-                />
-                <ListItemSecondaryAction>
-                  <IconButton
-                    edge="end"
-                    onClick={() => toggleHighlightSelection(highlight)}
-                  >
-                    {selectedHighlights.find(h => h.id === highlight.id)
-                      ? <CheckCircle color="primary" />
-                      : <RadioButtonUnchecked />}
-                  </IconButton>
-                  <IconButton
-                    edge="end"
-                    onClick={() => {
-                      console.log('Highlight Start:', highlight.start);
-                      handleSeek(undefined, highlight.start, highlight.end);
-                    }}
-                  >
-                    <PlayArrow />
-                  </IconButton>
-                </ListItemSecondaryAction>
-              </ListItem>
-            ))}
-          </List>
+          {/* 카테고리별로 출력 */}
+          {Object.entries(detectedHighlights).map(([category, highlights]) => (
+            highlights.length > 0 && (
+              <Box key={category} sx={{ mb: 2 }}>
+                <Typography variant="subtitle1" sx={{ fontWeight: 'bold' }}>{category}</Typography>
+                <List>
+                  {highlights.map((highlight) => (
+                    <ListItem key={highlight.id} secondaryAction={
+                      <>
+                        {/* 동그라미(선택) */}
+                        <IconButton edge="end" onClick={() => toggleHighlightSelection(category, highlight)}>
+                          {selectedHighlights.find(h => h.category === category && h.id === highlight.id)
+                            ? <CheckCircle color="primary" />
+                            : <RadioButtonUnchecked />}
+                        </IconButton>
+                        {/* 세모(재생) */}
+                        <IconButton edge="end" onClick={() => handlePlayHighlight(highlight)}>
+                          <PlayArrow />
+                        </IconButton>
+                        {/* 휴지통(삭제) */}
+                        <IconButton edge="end" onClick={() => handleDeleteHighlight(category, highlight.id)}>
+                          <Delete />
+                        </IconButton>
+                      </>
+                    }>
+                      <ListItemText
+                        primary={highlight.type}
+                        secondary={`${formatTime(highlight.start)} - ${formatTime(highlight.end)}`}
+                      />
+                    </ListItem>
+                  ))}
+                </List>
+              </Box>
+            )
+          ))}
 
           <Typography variant="h6" gutterBottom>
             Custom Highlights
@@ -568,7 +635,7 @@ export default function FootballVideoEditor() {
                 <ListItemSecondaryAction>
                   <IconButton
                     edge="end"
-                    onClick={() => toggleHighlightSelection(highlight)}
+                    onClick={() => toggleHighlightSelection(null, highlight)}
                   >
                     {selectedHighlights.find(h => h.start === highlight.start && h.end === highlight.end)
                       ? <CheckCircle color="primary" />
@@ -592,11 +659,21 @@ export default function FootballVideoEditor() {
             variant="contained"
             color="primary"
             onClick={handleExportSelected}
-            disabled={selectedHighlights.length === 0}
+            disabled={selectedHighlights.length === 0 || isExporting}
             sx={{ mt: 2 }}
           >
             Export Selected Highlights
           </Button>
+          {isExporting && (
+            <Typography variant="body2" color="primary" sx={{ mt: 1 }}>
+              {exportMessage}
+            </Typography>
+          )}
+          {!isExporting && exportMessage && (
+            <Typography variant="body2" color="primary" sx={{ mt: 1 }}>
+              {exportMessage}
+            </Typography>
+          )}
         </Box>
       </Box>
       <Modal
@@ -605,34 +682,68 @@ export default function FootballVideoEditor() {
         aria-labelledby="modal-title"
         aria-describedby="modal-description"
       >
-        <Box sx={modalStyle}>
-          <Typography id="modal-title" variant="h6" component="h2">
+        <Box sx={{ ...modalStyle, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', minWidth: 320 }}>
+          <Typography id="modal-title" variant="h6" component="h2" sx={{ mb: 2 }}>
             Add Custom Highlight
           </Typography>
           <TextField
             label="Highlight Name"
             value={customName}
             onChange={(e) => setCustomName(e.target.value)}
-            fullWidth
             margin="normal"
+            sx={{ mb: 2, maxWidth: 300, width: '100%' }}
           />
-          <TextField
-            label="Start Time (seconds)"
-            value={customStart}
-            onChange={(e) => setCustomStart(e.target.value)}
-            fullWidth
-            margin="normal"
-          />
-          <TextField
-            label="End Time (seconds)"
-            value={customEnd}
-            onChange={(e) => setCustomEnd(e.target.value)}
-            fullWidth
-            margin="normal"
-          />
-          <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 2 }}>
-            <Button onClick={handleClose} sx={{ mr: 1 }}>Cancel</Button>
-            <Button variant="contained" onClick={handleAddCustomHighlight}>Add</Button>
+          <Typography variant="subtitle2" sx={{ mb: 1 }}>Start Time (HH:MM:SS)</Typography>
+          <Box sx={{ display: 'flex', gap: 2, mb: 2, maxWidth: 300 }}>
+            <TextField
+              label="Hour"
+              value={customStartHour}
+              onChange={e => setCustomStartHour(e.target.value.replace(/[^0-9]/g, ''))}
+              inputProps={{ maxLength: 2 }}
+              sx={{ width: 90 }}
+            />
+            <TextField
+              label="Minute"
+              value={customStartMinute}
+              onChange={e => setCustomStartMinute(e.target.value.replace(/[^0-9]/g, ''))}
+              inputProps={{ maxLength: 2 }}
+              sx={{ width: 90 }}
+            />
+            <TextField
+              label="Second"
+              value={customStartSecond}
+              onChange={e => setCustomStartSecond(e.target.value.replace(/[^0-9]/g, ''))}
+              inputProps={{ maxLength: 2 }}
+              sx={{ width: 90 }}
+            />
+          </Box>
+          <Typography variant="subtitle2" sx={{ mb: 1 }}>End Time (HH:MM:SS)</Typography>
+          <Box sx={{ display: 'flex', gap: 2, mb: 2, maxWidth: 300 }}>
+            <TextField
+              label="Hour"
+              value={customEndHour}
+              onChange={e => setCustomEndHour(e.target.value.replace(/[^0-9]/g, ''))}
+              inputProps={{ maxLength: 2 }}
+              sx={{ width: 90 }}
+            />
+            <TextField
+              label="Minute"
+              value={customEndMinute}
+              onChange={e => setCustomEndMinute(e.target.value.replace(/[^0-9]/g, ''))}
+              inputProps={{ maxLength: 2 }}
+              sx={{ width: 90 }}
+            />
+            <TextField
+              label="Second"
+              value={customEndSecond}
+              onChange={e => setCustomEndSecond(e.target.value.replace(/[^0-9]/g, ''))}
+              inputProps={{ maxLength: 2 }}
+              sx={{ width: 90 }}
+            />
+          </Box>
+          <Box sx={{ display: 'flex', justifyContent: 'flex-end', width: '100%', mt: 2 }}>
+            <Button onClick={handleClose} sx={{ mr: 1 }}>CANCEL</Button>
+            <Button variant="contained" onClick={handleAddCustomHighlight}>ADD</Button>
           </Box>
         </Box>
       </Modal>

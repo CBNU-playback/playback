@@ -44,7 +44,7 @@ function CommonHeader() {
   
   const handleLogout = async () => {
     try {
-      await axios.post('http://localhost:8000/api/logout');
+      await axios.post('http://172.17.174.197:8000/api/logout');
     } catch (error) {
       console.error('Error logging out:', error);
     }
