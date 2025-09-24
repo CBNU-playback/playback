@@ -7,9 +7,12 @@ import {
   Grid,
   Button,
   Box,
-  CircularProgress
+  CircularProgress,
+  LinearProgress,
+  Fade,
+  Zoom
 } from '@mui/material';
-import { CloudUpload as UploadIcon, Edit as EditIcon } from '@mui/icons-material';
+import { CloudUpload as UploadIcon, Edit as EditIcon, Psychology as AIIcon, VideoLibrary as VideoIcon, AutoAwesome as MagicIcon } from '@mui/icons-material';
 import { makeStyles } from '@mui/styles';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
@@ -39,18 +42,52 @@ function MainPage() {
   const [videoSrc, setVideoSrc] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState('');
+  const [loadingStep, setLoadingStep] = useState(0);
+  const [progress, setProgress] = useState(0);
 
   const handleFileChange = async (event) => {
     const file = event.target.files[0];
     if (file) {
+      console.log('파일 이름:', file.name);
       setIsLoading(true);
-      setLoadingMessage('영상 업로드 및 분석 중...');
+      setLoadingStep(0);
+      setProgress(0);
+      
+      // Step 1: Checking for duplicates
+      setLoadingMessage('Checking for duplicate videos...');
+      setLoadingStep(1);
+      setProgress(10);
+      
+      // 1. check-duplicate API로 이름 중복 먼저 확인
+      // try {
+      //   console.log('중복 체크 요청 filename:', file.name);
+      //   const checkRes = await axios.post('http://172.17.174.197:8000/api/check-duplicate/', { filename: file.name });
+      //   if (checkRes.data && checkRes.data.is_duplicate) {
+      //     setLoadingMessage('Loading existing analysis results...');
+      //     setIsLoading(false);
+      //     navigate('/edit', {
+      //       state: {
+      //         videoSrc: null,
+      //         fileId: checkRes.data.file_id,
+      //         aiHighlights: checkRes.data.highlights,
+      //         subtitleFiles: checkRes.data.subtitle_files
+      //       }
+      //     });
+      //     return;
+      //   }
+      // } catch (e) {
+      //   console.error('중복 체크 오류:', e);
+      // }
+      
+      // Step 2: Uploading video
+      setLoadingMessage('Uploading video to server...');
+      setLoadingStep(2);
+      setProgress(25);
+      
       const url = URL.createObjectURL(file);
       setVideoSrc(url);
-      
-      // 비디오 파일을 백엔드로 업로드
       const formData = new FormData();
-      formData.append('file', file);  // 'file' 키를 사용하여 파일 추가
+      formData.append('file', file);
 
       try {
         const response = await axios.post('http://172.17.174.197:8000/api/upload/', formData, {
@@ -58,14 +95,54 @@ function MainPage() {
             'Content-Type': 'multipart/form-data',
           },
         });
-        setIsLoading(false);
-        setLoadingMessage('');
-        console.log('Upload successful:', response.data);  // 업로드 성공 메시지 출력
-
-        navigate('/edit', { state: { videoSrc: url, fileId: response.data.file_id, aiHighlights: response.data.highlights } });
+        
+        // Step 3: AI is analyzing
+        setLoadingMessage('AI is analyzing video content...');
+        setLoadingStep(3);
+        setProgress(50);
+        
+        // Step 4: Detecting highlights
+        setLoadingMessage('Detecting highlights and events...');
+        setLoadingStep(4);
+        setProgress(70);
+        
+        console.log('업로드 응답 데이터:', {
+          file_id: response.data.file_id,
+          highlights: response.data.highlights,
+          message: response.data.message
+        });
+        
+        // Step 5: Generating subtitles
+        setLoadingMessage('Generating subtitles...');
+        setLoadingStep(5);
+        setProgress(85);
+        
+        let subtitleFiles = null;
+        try {
+          const subtitleRes = await axios.post('http://172.17.174.197:8000/api/generate-subtitle/', {
+            file_id: response.data.file_id
+          });
+          subtitleFiles = subtitleRes.data.subtitle_files;
+        } catch (subtitleErr) {
+          console.error('Subtitle generation failed:', subtitleErr);
+        }
+        
+        // Step 6: Finalizing
+        setLoadingMessage('Finalizing analysis...');
+        setLoadingStep(6);
+        setProgress(100);
+        
+        // Small delay to show completion
+        setTimeout(() => {
+          setIsLoading(false);
+          setLoadingMessage('');
+          console.log('Upload successful:', response.data);
+          navigate('/edit', { state: { videoSrc: url, fileId: response.data.file_id, aiHighlights: response.data.highlights, subtitleFiles } });
+        }, 1000);
+        
       } catch (error) {
         setIsLoading(false);
-        setLoadingMessage('오류 발생!');
+        setLoadingMessage('Error occurred during processing!');
         console.error('Error uploading video:', error);
       }
     }
@@ -74,6 +151,15 @@ function MainPage() {
   const triggerFileInput = () => {
     document.getElementById('file-input').click();
   };
+
+  const loadingSteps = [
+    { icon: <VideoIcon />, text: "Checking for duplicate videos..." },
+    { icon: <UploadIcon />, text: "Uploading video to server..." },
+    { icon: <AIIcon />, text: "AI is analyzing video content..." },
+    { icon: <MagicIcon />, text: "Detecting highlights and events..." },
+    { icon: <EditIcon />, text: "Generating subtitles..." },
+    { icon: <AIIcon />, text: "Finalizing analysis..." }
+  ];
 
   return (
     <>
@@ -92,61 +178,153 @@ function MainPage() {
         alignItems: 'center',
         justifyContent: 'center'
       }}>
-        <Box sx={{
-          display: 'flex',
-          flexDirection: { xs: 'column', md: 'row' },
-          alignItems: 'center',
-          boxShadow: 4,
-          borderRadius: 4,
-          bgcolor: 'white',
-          p: { xs: 3, md: 6 },
-          maxWidth: 900,
-          width: '100%',
-          gap: 6
-        }}>
-          <Box sx={{ flex: 1, minWidth: 280 }}>
-            <Typography variant="h2" fontWeight="bold" gutterBottom>
-              AI Sports Video Editor
-            </Typography>
-            <Typography variant="body1" color="text.secondary" sx={{ mb: 4 }}>
-              Upload your sports videos and let our AI extract the highlights.<br />
-              Edit and customize your video with ease.
-            </Typography>
-            <input
-              type="file"
-              id="file-input"
-              accept="video/*"
-              style={{ display: 'none' }}
-              onChange={handleFileChange}
-            />
-            <Button
-              variant="contained"
-              color="primary"
-              size="large"
-              startIcon={<UploadIcon />}
-              onClick={triggerFileInput}
-              sx={{ borderRadius: 3, boxShadow: 2, px: 4, py: 1.5 }}
-              disabled={isLoading}
-            >
-              Upload Video
-            </Button>
-            {isLoading && (
-              <Box sx={{ mt: 2 }}>
-                <CircularProgress size={28} color="primary" />
-                <Typography variant="body2" color="primary" sx={{ ml: 2, display: 'inline' }}>
+        {!isLoading ? (
+          <Box sx={{
+            display: 'flex',
+            flexDirection: { xs: 'column', md: 'row' },
+            alignItems: 'center',
+            boxShadow: 4,
+            borderRadius: 4,
+            bgcolor: 'white',
+            p: { xs: 3, md: 6 },
+            maxWidth: 900,
+            width: '100%',
+            gap: 6
+          }}>
+            <Box sx={{ flex: 1, minWidth: 280 }}>
+              <Typography variant="h2" fontWeight="bold" gutterBottom>
+                AI Sports Video Editor
+              </Typography>
+              <Typography variant="body1" color="text.secondary" sx={{ mb: 4 }}>
+                Upload your sports videos and let our AI extract the highlights.<br />
+                Edit and customize your video with ease.
+              </Typography>
+              <input
+                type="file"
+                id="file-input"
+                accept="video/*"
+                style={{ display: 'none' }}
+                onChange={handleFileChange}
+              />
+              <Button
+                variant="contained"
+                color="primary"
+                size="large"
+                startIcon={<UploadIcon />}
+                onClick={triggerFileInput}
+                sx={{ borderRadius: 3, boxShadow: 2, px: 4, py: 1.5 }}
+                disabled={isLoading}
+              >
+                Upload Video
+              </Button>
+            </Box>
+            <Box sx={{ flex: 1, display: 'flex', justifyContent: 'center' }}>
+              <img
+                src="/draganddrop.jpg"
+                alt="AI Video Editing"
+                style={{ width: '100%', maxWidth: 340, borderRadius: 16, boxShadow: '0 8px 32px #0001' }}
+              />
+            </Box>
+          </Box>
+        ) : (
+          <Fade in={isLoading} timeout={500}>
+            <Box sx={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              boxShadow: 4,
+              borderRadius: 4,
+              bgcolor: 'white',
+              p: { xs: 4, md: 6 },
+              maxWidth: 600,
+              width: '100%',
+              textAlign: 'center'
+            }}>
+              {/* AI Icon with Animation */}
+              <Zoom in={true} timeout={800}>
+                <Box sx={{
+                  mb: 3,
+                  p: 2,
+                  borderRadius: '50%',
+                  bgcolor: 'primary.main',
+                  color: 'white',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  animation: 'pulse 2s infinite',
+                  '@keyframes pulse': {
+                    '0%': { transform: 'scale(1)' },
+                    '50%': { transform: 'scale(1.05)' },
+                    '100%': { transform: 'scale(1)' }
+                  }
+                }}>
+                  <AIIcon sx={{ fontSize: 48 }} />
+                </Box>
+              </Zoom>
+
+              {/* Main Title */}
+              <Typography variant="h4" fontWeight="bold" gutterBottom sx={{ mb: 2 }}>
+                AI is Working
+              </Typography>
+              
+              {/* Current Step */}
+              <Box sx={{ mb: 3, display: 'flex', alignItems: 'center', gap: 2 }}>
+                {loadingSteps[loadingStep - 1]?.icon && (
+                  <Zoom in={true} timeout={600}>
+                    <Box sx={{ color: 'primary.main' }}>
+                      {loadingSteps[loadingStep - 1].icon}
+                    </Box>
+                  </Zoom>
+                )}
+                <Typography variant="h6" color="primary" sx={{ fontWeight: 500 }}>
                   {loadingMessage}
                 </Typography>
               </Box>
-            )}
-          </Box>
-          <Box sx={{ flex: 1, display: 'flex', justifyContent: 'center' }}>
-            <img
-              src="/draganddrop.jpg"
-              alt="AI Video Editing"
-              style={{ width: '100%', maxWidth: 340, borderRadius: 16, boxShadow: '0 8px 32px #0001' }}
-            />
-          </Box>
-        </Box>
+
+              {/* Progress Bar */}
+              <Box sx={{ width: '100%', mb: 3 }}>
+                <LinearProgress 
+                  variant="determinate" 
+                  value={progress} 
+                  sx={{ 
+                    height: 8, 
+                    borderRadius: 4,
+                    bgcolor: 'grey.200',
+                    '& .MuiLinearProgress-bar': {
+                      borderRadius: 4,
+                      background: 'linear-gradient(90deg, #1976d2 0%, #42a5f5 100%)'
+                    }
+                  }} 
+                />
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                  {progress}% Complete
+                </Typography>
+              </Box>
+
+              {/* Step Indicators */}
+              <Box sx={{ display: 'flex', gap: 1, mb: 2 }}>
+                {loadingSteps.map((step, index) => (
+                  <Box
+                    key={index}
+                    sx={{
+                      width: 12,
+                      height: 12,
+                      borderRadius: '50%',
+                      bgcolor: index < loadingStep ? 'primary.main' : 'grey.300',
+                      transition: 'all 0.3s ease',
+                      transform: index === loadingStep - 1 ? 'scale(1.2)' : 'scale(1)'
+                    }}
+                  />
+                ))}
+              </Box>
+
+              {/* Subtitle */}
+              <Typography variant="body2" color="text.secondary">
+                Please wait while our AI analyzes your video and extracts highlights...
+              </Typography>
+            </Box>
+          </Fade>
+        )}
       </main>
     </>
   );

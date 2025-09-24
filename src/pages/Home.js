@@ -20,6 +20,10 @@ import {
   ListItemSecondaryAction,
   Modal,
   TextField,
+  Chip,
+  Tooltip,
+  Switch,
+  FormControlLabel,
 } from '@mui/material';
 import {
   PlayArrow,
@@ -33,6 +37,8 @@ import {
   Person,
   CheckCircle,
   RadioButtonUnchecked,
+  TextFields,
+  Slideshow,
 } from '@mui/icons-material';
 import { styled } from '@mui/material/styles';
 import axios from 'axios';
@@ -40,17 +46,20 @@ import axios from 'axios';
 
 const CustomSlider = styled(Slider)(({ theme }) => ({
   '& .MuiSlider-rail': {
-    backgroundColor: '#e0e0e0',
-    height: 4,
+    backgroundColor: '#e5e7eb',
+    height: 6,
+    borderRadius: 0,
   },
   '& .MuiSlider-track': {
-    backgroundColor: '#1976d2',
-    height: 4,
+    backgroundColor: '#111827',
+    height: 6,
+    borderRadius: 0,
   },
   '& .MuiSlider-thumb': {
-    width: 8,
+    width: 6,
     height: 20,
-    borderRadius: 2,
+    borderRadius: 0,
+    backgroundColor: '#111827',
   },
 }));
 
@@ -69,7 +78,7 @@ const HighlightMarks = ({ highlights, duration }) => {
       transform: 'translateY(-50%)',
       zIndex: 1,
       opacity: 0.7,
-      borderRadius: '4px',
+      borderRadius: '0px',
     },
   }));
 };
@@ -85,6 +94,19 @@ const modalStyle = {
   border: '2px solid #000',
   boxShadow: 24,
   p: 4,
+};
+
+// 이벤트별 색상 매핑
+const EVENT_COLORS = {
+  corner: '#ff9800',        // 오렌지
+  foul: '#8e24aa',          // 보라
+  freekick: '#00bcd4',      // 청록
+  goal: '#e53935',          // 빨강
+  'penalty kick': '#ffd600',// 노랑
+  offside: '#607d8b',       // 회색
+  save: '#43a047',          // 초록
+  shoot: '#1976d2',         // 파랑
+  custom: '#808080'
 };
 
 export default function FootballVideoEditor() {
@@ -109,22 +131,29 @@ export default function FootballVideoEditor() {
   const [customName, setCustomName] = useState(''); // 이름 상태 추가
   const [activeHighlightEnd, setActiveHighlightEnd] = useState(null);
   const fileInputRef = useRef(null);  // input 참조용
-  const [detectedHighlights, setDetectedHighlights] = useState({
-    Goals: [],
-    Shoot: [],
-    FreeKicks: [],
-    Fouls: []
-  });
+  const [detectedHighlights, setDetectedHighlights] = useState({});
   const [isLoading, setIsLoading] = useState(false); // 로딩 상태 추가
   const [loadingMessage, setLoadingMessage] = useState(''); // 로딩 메시지 추가
   const [isExporting, setIsExporting] = useState(false); // export 로딩 상태
   const [exportMessage, setExportMessage] = useState(''); // export 메시지
+  const [highlightPages, setHighlightPages] = useState({});
+  const [showTextOverlay, setShowTextOverlay] = useState(true); // 텍스트 오버레이 토글 상태
+  const [showTransitionEffect, setShowTransitionEffect] = useState(true); // 페이드인아웃 효과 토글 상태
 
   const [userEdits, setUserEdits] = useState([
     { start: 1800, end: 1830, note: 'Great dribble' },
   ]);
 
   const [selectedHighlights, setSelectedHighlights] = useState([]);
+
+  // Detected Highlights 탭 상태 추가
+  const [highlightTab, setHighlightTab] = useState(Object.keys(detectedHighlights)[0] || '');
+
+  // detectedHighlights가 바뀔 때 탭 초기화
+  useEffect(() => {
+    const keys = Object.keys(detectedHighlights);
+    if (keys.length > 0) setHighlightTab(keys[0]);
+  }, [detectedHighlights]);
 
   const formatTime = (time) => {
     const minutes = Math.floor(time / 60);
@@ -194,28 +223,18 @@ export default function FootballVideoEditor() {
   }, [activeHighlightEnd]);
 
   useEffect(() => {
-    if (aiHighlights && Array.isArray(aiHighlights)) {
-      setDetectedHighlights({
-        Goals: aiHighlights.map((h, idx) => ({
-          ...h,
-          type: 'Goal Scene',
-          id: h.id || idx + 1,
-        })),
-        Shoot: [],
-        FreeKicks: [],
-        Fouls: []
+    // aiHighlights 또는 highlights 중 하나라도 있으면 type별로 자동 분류
+    const source = aiHighlights && Array.isArray(aiHighlights) ? aiHighlights : highlights;
+    if (source && Array.isArray(source)) {
+      const categorized = {};
+      source.forEach(h => {
+        const cat = h.type || 'Unknown';
+        if (!categorized[cat]) categorized[cat] = [];
+        categorized[cat].push({ ...h, id: h.id });
       });
-    } else if (highlights && Array.isArray(highlights)) {
-      setDetectedHighlights({
-        Goals: highlights.map((h, idx) => ({
-          ...h,
-          type: 'Goal Scene',
-          id: h.id || idx + 1,
-        })),
-        Shoot: [],
-        FreeKicks: [],
-        Fouls: []
-      });
+      setDetectedHighlights(categorized);
+    } else {
+      setDetectedHighlights({});
     }
   }, [aiHighlights, highlights]);
 
@@ -254,6 +273,20 @@ export default function FootballVideoEditor() {
     }
   };
 
+  const handleDeleteCustomHighlight = (id) => {
+    setCustomHighlights(prev => {
+      const removed = prev.find(h => h.id === id);
+      // 선택된 목록에서도 제거
+      setSelectedHighlights(sel => sel.filter(h => {
+        if (h.category !== null) return true;
+        if (h.id && h.id === id) return false;
+        if (removed && h.start === removed.start && h.end === removed.end) return false;
+        return true;
+      }));
+      return prev.filter(h => h.id !== id);
+    });
+  };
+
   const handleExportSelected = async () => {
     if (selectedHighlights.length === 0) {
       alert('Please select at least one highlight');
@@ -262,9 +295,14 @@ export default function FootballVideoEditor() {
     try {
       setIsExporting(true);
       setExportMessage('영상 편집 중입니다. 잠시만 기다려주세요...');
-      // 선택된 하이라이트만 start, end 추출해서 정렬
+      // 선택된 하이라이트만 start, end, type, category 추출해서 정렬
       const sortedHighlights = selectedHighlights
-        .map(h => ({ start: h.start, end: h.end }))
+        .map(h => ({ 
+          start: h.start, 
+          end: h.end, 
+          type: h.type || 'Highlight',
+          category: h.category || ''
+        }))
         .sort((a, b) => a.start - b.start);
       const response = await fetch('http://172.17.174.197:8000/api/export-highlights/', {
         method: 'POST',
@@ -274,6 +312,8 @@ export default function FootballVideoEditor() {
         body: JSON.stringify({
           videoName: fileId, // MainPage에서 전달된 서버 저장 파일명
           ranges: sortedHighlights, // [{start: 10, end: 20}, ...] 선택된 것만
+          showTextOverlay: showTextOverlay, // 텍스트 오버레이 표시 여부
+          showTransitionEffect: showTransitionEffect, // 페이드인아웃 효과 표시 여부
         }),
       });
       if (!response.ok) {
@@ -282,7 +322,17 @@ export default function FootballVideoEditor() {
         throw new Error('Failed to export video');
       }
       const blob = await response.blob();
-      let filename = 'exported_highlights.mp4';
+      
+      // 기본 파일명을 업로드 영상명 기반으로 생성
+      let baseFilename = 'exported_highlights.mp4';
+      if (fileId) {
+        // fileId를 문자열로 변환하고 원본 파일명 추출 (확장자 제거)
+        const fileIdStr = String(fileId);
+        const originalName = fileIdStr.replace(/\.[^/.]+$/, ""); // 확장자 제거
+        baseFilename = `${originalName}_edited_highlights.mp4`;
+      }
+      
+      let filename = baseFilename;
       const disposition = response.headers.get('Content-Disposition');
       if (disposition && disposition.indexOf('filename=') !== -1) {
         filename = disposition
@@ -290,17 +340,25 @@ export default function FootballVideoEditor() {
           .replace(/['"]/g, '')
           .trim();
       }
-      setExportMessage('다운로드를 시작합니다!');
+      setExportMessage('영상 편집이 완료되었습니다!');
       setIsExporting(false);
+      
+      // 저장 다이얼로그 표시
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
       a.download = filename;
+      a.style.display = 'none';
       document.body.appendChild(a);
+      
+      // 네이티브 파일 저장 다이얼로그 표시
+      a.download = filename; // 기본 파일명 설정
       a.click();
+      setExportMessage('저장이 완료되었습니다!');
+      
       a.remove();
       window.URL.revokeObjectURL(url);
-      setTimeout(() => setExportMessage(''), 2000);
+      setTimeout(() => setExportMessage(''), 3000);
     } catch (error) {
       setExportMessage('영상 편집에 실패했습니다.');
       setIsExporting(false);
@@ -346,36 +404,49 @@ export default function FootballVideoEditor() {
   const handleNewFileChange = async (event) => {
     const file = event.target.files[0];
     if (file) {
+      setIsLoading(true);
+      setLoadingMessage('중복 영상 확인 중...');
+      // 1. check-duplicate API로 이름 중복 먼저 확인
+      try {
+        const checkRes = await axios.post('http://172.17.174.197:8000/api/check-duplicate/', { filename: file.name });
+        if (checkRes.data && checkRes.data.is_duplicate) {
+          setDetectedHighlights({
+            ...Object.entries(checkRes.data.highlights || {}).reduce((acc, [k, v]) => {
+              if (Array.isArray(v)) acc[k] = v;
+              return acc;
+            }, {})
+          });
+          setLoadingMessage('기존 분석 결과를 불러왔습니다!');
+          setTimeout(() => setLoadingMessage(''), 1000);
+          setIsLoading(false);
+          return;
+        }
+      } catch (e) {
+        // 중복 체크 실패 시 무시하고 업로드 진행
+        console.error('중복 체크 오류:', e);
+      }
+      setLoadingMessage('영상 업로드 및 분석 중...');
       const url = URL.createObjectURL(file);
       const formData = new FormData();
       formData.append('file', file);
       try {
-        setIsLoading(true);
-        setLoadingMessage('영상 업로드 및 분석 중...');
         // 업로드 + 분석
         const uploadResponse = await axios.post('http://172.17.174.197:8000/api/upload/', formData, {
           headers: { 'Content-Type': 'multipart/form-data' },
         });
-        // 반환된 highlights만 사용, Goals에만 넣기
         if (uploadResponse.data && Array.isArray(uploadResponse.data.highlights)) {
           setDetectedHighlights({
-            Goals: uploadResponse.data.highlights.map((h, idx) => ({
-              ...h,
-              type: 'Goal Scene',
-              id: h.id || idx + 1,
-            })),
-            Shoot: [],
-            FreeKicks: [],
-            Fouls: []
+            ...Object.entries(uploadResponse.data.highlights || {}).reduce((acc, [k, v]) => {
+              if (Array.isArray(v)) acc[k] = v;
+              return acc;
+            }, {})
           });
         } else {
-          setDetectedHighlights({ Goals: [], Shoot: [], FreeKicks: [], Fouls: [] });
+          setDetectedHighlights({});
         }
         setLoadingMessage('완료!');
         setTimeout(() => setLoadingMessage(''), 1000);
         setIsLoading(false);
-        // 필요하다면 navigate로 넘길 때도 highlights만 넘김
-        // navigate('/edit', { state: { videoSrc: url, fileId: uploadResponse.data.file_id, highlights } });
       } catch (error) {
         setLoadingMessage('오류 발생!');
         setIsLoading(false);
@@ -384,9 +455,33 @@ export default function FootballVideoEditor() {
     }
   };
 
+  const handlePageChange = (category, newPage) => {
+    setHighlightPages(prev => ({
+      ...prev,
+      [category]: newPage
+    }));
+  };
+
+  // 비디오 프레임에 키보드 이벤트 핸들러 추가
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (document.activeElement === videoRef.current) {
+        if (e.key === 'ArrowLeft') {
+          handleSkip(-10);
+          e.preventDefault();
+        } else if (e.key === 'ArrowRight') {
+          handleSkip(10);
+          e.preventDefault();
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [currentTime, videoDuration]);
+
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
-      <AppBar position="static" elevation={0}>
+    <Box sx={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100vh', minHeight: '100vh', background: '#ffffff' }}>
+      <AppBar position="sticky" color="transparent" elevation={0} sx={{ borderBottom: '1px solid #eef2f7', backdropFilter: 'saturate(180%) blur(4px)' }}>
         <Toolbar>
           <Typography
             variant="h6"
@@ -399,7 +494,7 @@ export default function FootballVideoEditor() {
           >
             AI Sports Editor
           </Typography>
-          <Button startIcon={<CloudUpload />} onClick={handleNewVideoUploadClick} disabled={isLoading}>
+          <Button startIcon={<CloudUpload />} onClick={handleNewVideoUploadClick} disabled={isLoading} sx={{ bgcolor: '#111827', color: '#fff', '&:hover': { bgcolor: '#0b1220' } }}>
             Upload New Video
           </Button>
           {isLoading && (
@@ -423,11 +518,20 @@ export default function FootballVideoEditor() {
             <video
               ref={videoRef}
               src={videoSrc}
-              width="100%"
-              style={{ aspectRatio: '16/9', backgroundColor: 'black', marginBottom: '16px' }}
+              style={{
+                width: '100%',
+                maxWidth: 1100,
+                aspectRatio: '16/9',
+                backgroundColor: 'black',
+                marginBottom: '16px',
+                display: 'block',
+                marginLeft: 'auto',
+                marginRight: 'auto',
+                borderRadius: 16,
+                boxShadow: '0 12px 32px rgba(17,24,39,0.15)'
+              }}
               onLoadedMetadata={() => {
                 if (videoRef.current) {
-                  console.log('Video loaded, duration:', videoRef.current.duration);
                   setVideoDuration(videoRef.current.duration);
                 }
               }}
@@ -436,10 +540,21 @@ export default function FootballVideoEditor() {
               }}
             />
           ) : (
-            <Box sx={{ width: '100%', aspectRatio: '16/9', bgcolor: 'black', mb: 2 }} />
+            <Box sx={{
+              width: '100%',
+              maxWidth: 1100,
+              aspectRatio: '16/9',
+              bgcolor: 'black',
+              mb: 2,
+              display: 'block',
+              marginLeft: 'auto',
+              marginRight: 'auto',
+              borderRadius: 16,
+              boxShadow: '0 12px 32px rgba(17,24,39,0.15)'
+            }} />
           )}
 
-          <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', mb: 2, p: 1.5, bgcolor: '#ffffff', border: '1px solid #eceff4', borderRadius: 12, boxShadow: '0 6px 16px rgba(17,24,39,0.06)' }}>
             <IconButton onClick={() => handleSkip(-10)}>
               <SkipPrevious />
             </IconButton>
@@ -473,145 +588,212 @@ export default function FootballVideoEditor() {
             />
           </Box>
 
-          <Tabs value={tabValue} onChange={handleTabChange} sx={{ mb: 2 }}>
+          <Tabs value={tabValue} onChange={handleTabChange} sx={{ mb: 2 }} TabIndicatorProps={{ sx: { backgroundColor: '#111827', height: 3 } }}>
             <Tab label="Timeline" />
-            <Tab label="Player Highlights" />
           </Tabs>
 
           {tabValue === 0 && (
             <Box>
               <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
                 <Typography variant="h6">Match Timeline</Typography>
-                <Button startIcon={<Add />} onClick={handleOpen}>
+                <Button startIcon={<Add />} onClick={handleOpen} sx={{ borderRadius: 10, bgcolor: '#111827', color: '#fff', '&:hover': { bgcolor: '#0b1220' } }}>
                   Add Custom Highlight
                 </Button>
               </Box>
-              <Box sx={{ height: 80, bgcolor: 'grey.200', position: 'relative', mb: 2 }}>
-                {detectedHighlights.Goals.map((highlight, index) => (
-                  <Box
-                    key={`ai-${index}`}
-                    sx={{
-                      position: 'absolute',
-                      left: `${(highlight.start / videoDuration) * 100}%`,
-                      width: `${((highlight.end - highlight.start) / videoDuration) * 100}%`,
-                      height: '100%',
-                      bgcolor: '#1976D2',
-                      opacity: 0.7,
-                    }}
-                  />
-                ))}
-                {customHighlights.map((highlight, index) => (
-                  <Box
-                    key={`custom-${index}`}
-                    sx={{
-                      position: 'absolute',
-                      left: `${(highlight.start / videoDuration) * 100}%`,
-                      width: `${((highlight.end - highlight.start) / videoDuration) * 100}%`,
-                      height: '100%',
-                      bgcolor: '#345DA7',
-                      opacity: 0.7,
-                    }}
-                  />
+              <Box sx={{
+                height: 80,
+                bgcolor: '#ffffff',
+                position: 'relative',
+                mb: 2,
+                width: '100%',
+                border: '1px solid #eceff4',
+                borderRadius: 0,
+                boxShadow: '0 6px 16px rgba(17,24,39,0.06)'
+              }}>
+                {Object.entries(detectedHighlights || {}).map(([category, highlights]) =>
+                  Array.isArray(highlights) && highlights.length > 0 && highlights.map((highlight, index) => {
+                    const isSelected = !!selectedHighlights.find(h => h.category === category && h.id === highlight.id);
+                    const baseColor = EVENT_COLORS[category] || '#1976D2';
+                    return (
+                      <Tooltip key={`${category}-${index}`} title={`${category} • ${formatTime(highlight.start)} - ${formatTime(highlight.end)}`} arrow>
+                        <Box
+                          sx={{
+                            position: 'absolute',
+                            left: `${(highlight.start / videoDuration) * 100}%`,
+                            width: `max(${((highlight.end - highlight.start) / videoDuration) * 100}%, 6px)`,
+                            minWidth: '6px',
+                            height: '100%',
+                            bgcolor: isSelected ? '#111827' : baseColor,
+                            opacity: isSelected ? 1 : 0.8,
+                            borderRadius: 0,
+                            cursor: 'pointer',
+                          }}
+                          onClick={() => {
+                            if (videoRef.current) {
+                              videoRef.current.currentTime = highlight.start;
+                              videoRef.current.play();
+                            }
+                          }}
+                        />
+                      </Tooltip>
+                    );
+                  })
+                )}
+                {customHighlights.map((highlight, index) => {
+                  const isSelected = !!selectedHighlights.find(h => h.category === null && h.id === highlight.id);
+                  return (
+                    <Tooltip key={`custom-${index}`} title={`custom • ${formatTime(highlight.start)} - ${formatTime(highlight.end)}`} arrow>
+                      <Box
+                        sx={{
+                          position: 'absolute',
+                          left: `${(highlight.start / videoDuration) * 100}%`,
+                          width: `max(${((highlight.end - highlight.start) / videoDuration) * 100}%, 6px)`,
+                          minWidth: '6px',
+                          height: '100%',
+                          bgcolor: isSelected ? '#111827' : '#808080',   // 회색 (Material grey 500)
+                          opacity: isSelected ? 1 : 0.8,
+                          borderRadius: 0,
+                          cursor: 'pointer',
+                        }}
+                        onClick={() => {
+                          if (videoRef.current) {
+                            videoRef.current.currentTime = highlight.start;
+                            videoRef.current.play();
+                            setIsPlaying(true);
+                          }
+                        }}
+                      />
+                    </Tooltip>
+                  );
+                })}
+              </Box>
+              {/* Color legend under timeline */}
+              <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mt: 1 }}>
+                {Object.entries(EVENT_COLORS).map(([cat, color]) => (
+                  <Chip key={`legend-${cat}`} label={cat} size="small" sx={{ borderColor: color, color, borderWidth: 1, borderStyle: 'solid' }} variant="outlined" />
                 ))}
               </Box>
-              <List>
-                {userEdits.map((edit, index) => (
-                  <ListItem key={index}>
-                    <ListItemText
-                      primary={`Custom Edit ${index + 1}`}
-                      secondary={`${formatTime(edit.start)} - ${formatTime(edit.end)}`}
-                    />
-                    <ListItemSecondaryAction>
-                      <IconButton edge="end" aria-label="delete">
-                        <Delete />
-                      </IconButton>
-                    </ListItemSecondaryAction>
-                  </ListItem>
-                ))}
-              </List>
-            </Box>
-          )}
-
-          {tabValue === 1 && (
-            <Box>
-              <FormControl fullWidth sx={{ mb: 2 }}>
-                <InputLabel>Select Player</InputLabel>
-                <Select
-                  value={selectedPlayer}
-                  label="Select Player"
-                  onChange={(e) => setSelectedPlayer(e.target.value)}
-                >
-                  <MenuItem value="player-a">Player A</MenuItem>
-                  <MenuItem value="player-b">Player B</MenuItem>
-                  <MenuItem value="goalkeeper">Goalkeeper</MenuItem>
-                </Select>
-              </FormControl>
-              <List>
-                {detectedHighlights.Goals
-                  .filter((highlight) => highlight.player.toLowerCase() === selectedPlayer.replace('-', ' '))
-                  .map((highlight, index) => (
-                    <ListItem key={index}>
-                      <ListItemText
-                        primary={highlight.type}
-                        secondary={`${formatTime(highlight.start)} - ${formatTime(highlight.end)}`}
-                      />
-                      <ListItemSecondaryAction>
-                        <IconButton
-                          edge="end"
-                          onClick={() => {
-                            console.log('Highlight Start:', highlight.start);
-                            handleSeek(undefined, highlight.start, highlight.end);
-                          }}
-                        >
-                          <PlayArrow />
-                        </IconButton>
-                      </ListItemSecondaryAction>
-                    </ListItem>
-                  ))}
-              </List>
             </Box>
           )}
         </Box>
 
-        <Box sx={{ width: 300, p: 3, borderLeft: 1, borderColor: 'divider' }}>
+        <Box sx={{ width: 300, p: 3, borderLeft: '1px solid #eef2f7', bgcolor: '#ffffff' }}>
           <Typography variant="h6" gutterBottom>
             Detected Highlights
           </Typography>
-          {/* 카테고리별로 출력 */}
-          {Object.entries(detectedHighlights).map(([category, highlights]) => (
-            highlights.length > 0 && (
-              <Box key={category} sx={{ mb: 2 }}>
-                <Typography variant="subtitle1" sx={{ fontWeight: 'bold' }}>{category}</Typography>
-                <List>
-                  {highlights.map((highlight) => (
+          {/* Overview chips: categories at a glance */}
+          <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 1 }}>
+            {Object.keys(detectedHighlights).map((cat) => {
+              const count = (detectedHighlights[cat] || []).length;
+              const color = EVENT_COLORS[cat] || '#333';
+              return (
+                <Chip
+                  key={`overview-${cat}`}
+                  size="small"
+                  label={`${cat} (${count})`}
+                  onClick={() => setHighlightTab(cat)}
+                  sx={{
+                    borderColor: color,
+                    color,
+                    borderWidth: 1,
+                    borderStyle: 'solid',
+                    cursor: 'pointer'
+                  }}
+                  variant={highlightTab === cat ? 'filled' : 'outlined'}
+                  color={highlightTab === cat ? 'primary' : 'default'}
+                />
+              );
+            })}
+          </Box>
+          {/* 카테고리별 탭 UI */}
+          {Object.keys(detectedHighlights).length > 0 && (
+            <Tabs
+              value={highlightTab}
+              onChange={(e, newValue) => setHighlightTab(newValue)}
+              variant="scrollable"
+              scrollButtons="auto"
+              sx={{ mb: 2 }}
+              TabIndicatorProps={{ sx: { backgroundColor: '#111827', height: 3 } }}
+            >
+              {Object.keys(detectedHighlights).map((cat) => {
+                const count = (detectedHighlights[cat] || []).length;
+                const color = EVENT_COLORS[cat] || '#333';
+                return (
+                  <Tab
+                    key={cat}
+                    value={cat}
+                    label={
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <Box sx={{ width: 8, height: 8, bgcolor: color, borderRadius: '2px' }} />
+                        <span>{cat}</span>
+                        <Chip size="small" label={count} />
+                      </Box>
+                    }
+                  />
+                );
+              })}
+            </Tabs>
+          )}
+          {/* 탭별 하이라이트만 보여주기 */}
+          {(() => {
+            const highlights = detectedHighlights[highlightTab] || [];
+            if (highlights.length === 0) return <Typography>No highlights</Typography>;
+            const page = highlightPages[highlightTab] || 0;
+            const pageSize = 4;
+            const maxPage = Math.ceil(highlights.length / pageSize) - 1;
+            const currentItems = highlights.slice(page * pageSize, (page + 1) * pageSize);
+            const color = EVENT_COLORS[highlightTab] || '#333';
+            return (
+              <Box>
+                <Typography
+                  variant="subtitle1"
+                  sx={{ fontWeight: 'bold', color, fontSize: 20 }}
+                >
+                  {highlightTab}
+                </Typography>
+                <List sx={{ mt: 0 }}>
+                  {currentItems.map((highlight) => (
                     <ListItem key={highlight.id} secondaryAction={
-                      <>
-                        {/* 동그라미(선택) */}
-                        <IconButton edge="end" onClick={() => toggleHighlightSelection(category, highlight)}>
-                          {selectedHighlights.find(h => h.category === category && h.id === highlight.id)
-                            ? <CheckCircle color="primary" />
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                        <IconButton edge="end" onClick={() => toggleHighlightSelection(highlightTab, highlight)}>
+                          {selectedHighlights.find(h => h.category === highlightTab && h.id === highlight.id)
+                            ? <CheckCircle />
                             : <RadioButtonUnchecked />}
                         </IconButton>
-                        {/* 세모(재생) */}
                         <IconButton edge="end" onClick={() => handlePlayHighlight(highlight)}>
                           <PlayArrow />
                         </IconButton>
-                        {/* 휴지통(삭제) */}
-                        <IconButton edge="end" onClick={() => handleDeleteHighlight(category, highlight.id)}>
+                        <IconButton edge="end" onClick={() => handleDeleteHighlight(highlightTab, highlight.id)}>
                           <Delete />
                         </IconButton>
-                      </>
-                    }>
+                      </Box>
+                    } sx={{ borderLeft: `4px solid ${color}` }}>
                       <ListItemText
                         primary={highlight.type}
-                        secondary={`${formatTime(highlight.start)} - ${formatTime(highlight.end)}`}
+                        secondary={<span style={{ fontWeight: 600 }}>{formatTime(highlight.start)} - {formatTime(highlight.end)}</span>}
+                        sx={{ pr: 3 }}
                       />
                     </ListItem>
                   ))}
                 </List>
+                {highlights.length > pageSize && (
+                  <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', mt: 1 }}>
+                    <Button
+                      size="small"
+                      onClick={() => handlePageChange(highlightTab, Math.max(0, page - 1))}
+                      disabled={page === 0}
+                    >{"<"}</Button>
+                    <Typography sx={{ mx: 1 }}>{page + 1} / {maxPage + 1}</Typography>
+                    <Button
+                      size="small"
+                      onClick={() => handlePageChange(highlightTab, Math.min(maxPage, page + 1))}
+                      disabled={page === maxPage}
+                    >{" > "}</Button>
+                  </Box>
+                )}
               </Box>
-            )
-          ))}
+            );
+          })()}
 
           <Typography variant="h6" gutterBottom>
             Custom Highlights
@@ -624,8 +806,9 @@ export default function FootballVideoEditor() {
                   bgcolor: selectedHighlights.find(h => h.start === highlight.start && h.end === highlight.end)
                     ? 'action.selected'
                     : 'transparent',
-                  borderRadius: 1,
-                  mb: 1
+                  borderRadius: 12,
+                  mb: 1,
+                  border: '1px solid #eceff4'
                 }}
               >
                 <ListItemText
@@ -650,17 +833,74 @@ export default function FootballVideoEditor() {
                   >
                     <PlayArrow />
                   </IconButton>
+                  <IconButton
+                    edge="end"
+                    onClick={() => handleDeleteCustomHighlight(highlight.id)}
+                  >
+                    <Delete />
+                  </IconButton>
                 </ListItemSecondaryAction>
               </ListItem>
             ))}
           </List>
+          
+          <Typography variant="h6" gutterBottom>
+            Editing options
+          </Typography>
+          {/* 편집 옵션 토글들 */}
+          <Box sx={{ mt: 2, mb: 1, p: 2, bgcolor: '#f8f9fa', borderRadius: 2, border: '1px solid #e9ecef' }}>
+            {/* 텍스트 오버레이 토글 */}
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={showTextOverlay}
+                  onChange={(e) => setShowTextOverlay(e.target.checked)}
+                  color="primary"
+                />
+              }
+              label={
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <TextFields fontSize="small" />
+                  <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                    Text overlay
+                  </Typography>
+                </Box>
+              }
+            />
+            {/* <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5, mb: 1 }}>
+              각 하이라이트에 이벤트 정보를 텍스트로 표시합니다
+            </Typography> */}
+            
+            {/* 페이드인아웃 효과 토글 */}
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={showTransitionEffect}
+                  onChange={(e) => setShowTransitionEffect(e.target.checked)}
+                  color="primary"
+                />
+              }
+              label={
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <Slideshow fontSize="small" />
+                  <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                  Fade transition
+                  </Typography>
+                </Box>
+              }
+            />
+            {/* <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+              장면 전환 시 이벤트 정보를 페이드인아웃으로 표시합니다
+            </Typography> */}
+          </Box>
+          
           <Button
             fullWidth
             variant="contained"
             color="primary"
             onClick={handleExportSelected}
             disabled={selectedHighlights.length === 0 || isExporting}
-            sx={{ mt: 2 }}
+            sx={{ mt: 1, bgcolor: '', '&:hover': { bgcolor: '#1a4fba' }, borderRadius: 12 }}
           >
             Export Selected Highlights
           </Button>
@@ -742,8 +982,8 @@ export default function FootballVideoEditor() {
             />
           </Box>
           <Box sx={{ display: 'flex', justifyContent: 'flex-end', width: '100%', mt: 2 }}>
-            <Button onClick={handleClose} sx={{ mr: 1 }}>CANCEL</Button>
-            <Button variant="contained" onClick={handleAddCustomHighlight}>ADD</Button>
+            <Button onClick={handleClose} sx={{ mr: 1 }}>Cancel</Button>
+            <Button variant="contained" onClick={handleAddCustomHighlight}>Add</Button>
           </Box>
         </Box>
       </Modal>
