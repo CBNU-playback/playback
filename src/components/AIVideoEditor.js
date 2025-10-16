@@ -137,7 +137,16 @@ function MainPage() {
           setIsLoading(false);
           setLoadingMessage('');
           console.log('Upload successful:', response.data);
-          navigate('/edit', { state: { videoSrc: url, fileId: response.data.file_id, aiHighlights: response.data.highlights, subtitleFiles } });
+          navigate('/edit', { 
+            state: { 
+              videoSrc: url, 
+              fileId: response.data.file_id, 
+              aiHighlights: response.data.highlights,
+              customHighlights: response.data.custom_highlights || [],
+              deletedHighlightIds: response.data.deleted_highlight_ids || [],
+              subtitleFiles 
+            } 
+          });
         }, 1000);
         
       } catch (error) {

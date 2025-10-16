@@ -111,7 +111,7 @@ const EVENT_COLORS = {
 
 export default function FootballVideoEditor() {
   const location = useLocation();
-  const { videoSrc, fileId, aiHighlights, highlights } = location.state || {};
+  const { videoSrc, fileId, aiHighlights, highlights, customHighlights: loadedCustomHighlights, deletedHighlightIds: loadedDeletedIds } = location.state || {};
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [videoDuration, setVideoDuration] = useState(0); // videoDuration을 상태로 설정
@@ -127,7 +127,7 @@ export default function FootballVideoEditor() {
   const [customEndHour, setCustomEndHour] = useState('');
   const [customEndMinute, setCustomEndMinute] = useState('');
   const [customEndSecond, setCustomEndSecond] = useState('');
-  const [customHighlights, setCustomHighlights] = useState([]);
+  const [customHighlights, setCustomHighlights] = useState(loadedCustomHighlights || []);
   const [customName, setCustomName] = useState(''); // 이름 상태 추가
   const [activeHighlightEnd, setActiveHighlightEnd] = useState(null);
   const fileInputRef = useRef(null);  // input 참조용
@@ -145,14 +145,22 @@ export default function FootballVideoEditor() {
   ]);
 
   const [selectedHighlights, setSelectedHighlights] = useState([]);
+  
+  // 저장 상태 관리
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveMessage, setSaveMessage] = useState('');
+  const [deletedHighlightIds, setDeletedHighlightIds] = useState(loadedDeletedIds || []);
 
   // Detected Highlights 탭 상태 추가
-  const [highlightTab, setHighlightTab] = useState(Object.keys(detectedHighlights)[0] || '');
+  const [highlightTab, setHighlightTab] = useState('');
 
   // detectedHighlights가 바뀔 때 탭 초기화
   useEffect(() => {
     const keys = Object.keys(detectedHighlights);
-    if (keys.length > 0) setHighlightTab(keys[0]);
+    if (keys.length > 0 && !highlightTab) {
+      setHighlightTab(keys[0]);
+    }
   }, [detectedHighlights]);
 
   const formatTime = (time) => {
@@ -238,6 +246,70 @@ export default function FootballVideoEditor() {
     }
   }, [aiHighlights, highlights]);
 
+  // 저장 함수
+  const saveHighlights = async () => {
+    if (!fileId) {
+      alert('파일 ID가 없습니다.');
+      return;
+    }
+    
+    try {
+      setIsSaving(true);
+      setSaveMessage('저장 중...');
+      
+      // detectedHighlights를 평면 배열로 변환
+      const flattenedHighlights = [];
+      Object.entries(detectedHighlights).forEach(([category, highlights]) => {
+        highlights.forEach(h => flattenedHighlights.push(h));
+      });
+      
+      const response = await axios.put(`http://172.17.174.197:8000/api/update-highlights/${fileId}/`, {
+        highlights: flattenedHighlights,
+        custom_highlights: customHighlights,
+        deleted_highlight_ids: deletedHighlightIds
+      });
+      
+      console.log('[SAVE] 저장 성공:', response.data);
+      setHasUnsavedChanges(false);
+      setSaveMessage('저장 완료!');
+      setTimeout(() => setSaveMessage(''), 2000);
+    } catch (error) {
+      console.error('[SAVE] 저장 실패:', error);
+      setSaveMessage('저장 실패!');
+      setTimeout(() => setSaveMessage(''), 3000);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // 페이지 이탈 시 경고
+  useEffect(() => {
+    const handleBeforeUnload = (e) => {
+      if (hasUnsavedChanges) {
+        e.preventDefault();
+        e.returnValue = '저장하지 않은 변경사항이 있습니다. 페이지를 떠나시겠습니까?';
+        return e.returnValue;
+      }
+    };
+    
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [hasUnsavedChanges]);
+
+  // 페이지 라우팅 이동 시 경고
+  useEffect(() => {
+    const unblock = () => {
+      if (hasUnsavedChanges) {
+        return window.confirm('저장하지 않은 변경사항이 있습니다. 페이지를 떠나시겠습니까?');
+      }
+      return true;
+    };
+    
+    // React Router의 navigation blocking은 v6에서 다르게 처리되므로
+    // 간단하게 window.onbeforeunload로 처리
+    return () => {};
+  }, [hasUnsavedChanges]);
+
   const handleSaveExport = () => {
     const a = document.createElement('a');
     a.href = videoSrc; // videoSrc가 이미 Blob URL이므로 그대로 사용
@@ -262,6 +334,8 @@ export default function FootballVideoEditor() {
       [category]: prev[category].filter(h => h.id !== highlightId)
     }));
     setSelectedHighlights(prev => prev.filter(h => !(h.category === category && h.id === highlightId)));
+    setDeletedHighlightIds(prev => [...prev, highlightId]);
+    setHasUnsavedChanges(true);  // 변경사항 표시
   };
 
   const handlePlayHighlight = (highlight) => {
@@ -283,6 +357,7 @@ export default function FootballVideoEditor() {
         if (removed && h.start === removed.start && h.end === removed.end) return false;
         return true;
       }));
+      setHasUnsavedChanges(true);  // 변경사항 표시
       return prev.filter(h => h.id !== id);
     });
   };
@@ -390,11 +465,13 @@ export default function FootballVideoEditor() {
       id: Date.now(), // 고유 ID 추가
       name: customName,
       start: start,
-      end: end
+      end: end,
+      type: customName || 'Custom'  // type 필드 추가
     }]);
     setCustomName('');
     setCustomStartHour(''); setCustomStartMinute(''); setCustomStartSecond('');
     setCustomEndHour(''); setCustomEndMinute(''); setCustomEndSecond('');
+    setHasUnsavedChanges(true);  // 변경사항 표시
     handleClose();
   };
   const handleNewVideoUploadClick = () => {
@@ -494,6 +571,41 @@ export default function FootballVideoEditor() {
           >
             AI Sports Editor
           </Typography>
+          
+          {/* 저장 상태 표시 */}
+          {hasUnsavedChanges && !isSaving && (
+            <Chip 
+              label="저장되지 않음" 
+              size="small" 
+              color="warning" 
+              sx={{ mr: 2 }}
+            />
+          )}
+          {saveMessage && (
+            <Typography 
+              variant="body2" 
+              color={saveMessage.includes('완료') ? 'success.main' : saveMessage.includes('실패') ? 'error.main' : 'primary'} 
+              sx={{ mr: 2 }}
+            >
+              {saveMessage}
+            </Typography>
+          )}
+          
+          {/* Save 버튼 */}
+          <Button 
+            startIcon={<Save />} 
+            onClick={saveHighlights} 
+            disabled={!hasUnsavedChanges || isSaving}
+            sx={{ 
+              mr: 1,
+              bgcolor: hasUnsavedChanges ? '#2e7d32' : '#e0e0e0', 
+              color: hasUnsavedChanges ? '#fff' : '#757575',
+              '&:hover': { bgcolor: hasUnsavedChanges ? '#1b5e20' : '#d0d0d0' }
+            }}
+          >
+            {isSaving ? '저장 중...' : 'Save'}
+          </Button>
+          
           <Button startIcon={<CloudUpload />} onClick={handleNewVideoUploadClick} disabled={isLoading} sx={{ bgcolor: '#111827', color: '#fff', '&:hover': { bgcolor: '#0b1220' } }}>
             Upload New Video
           </Button>
@@ -706,7 +818,7 @@ export default function FootballVideoEditor() {
             })}
           </Box>
           {/* 카테고리별 탭 UI */}
-          {Object.keys(detectedHighlights).length > 0 && (
+          {Object.keys(detectedHighlights).length > 0 && highlightTab && (
             <Tabs
               value={highlightTab}
               onChange={(e, newValue) => setHighlightTab(newValue)}
