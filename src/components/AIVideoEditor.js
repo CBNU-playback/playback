@@ -12,10 +12,11 @@ import {
   Fade,
   Zoom
 } from '@mui/material';
-import { CloudUpload as UploadIcon, Edit as EditIcon, Psychology as AIIcon, VideoLibrary as VideoIcon, AutoAwesome as MagicIcon } from '@mui/icons-material';
+import { CloudUpload as UploadIcon, Edit as EditIcon, Psychology as AIIcon, VideoLibrary as VideoIcon, AutoAwesome as MagicIcon, Help as HelpIcon } from '@mui/icons-material';
 import { makeStyles } from '@mui/styles';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
+import HelpModal from './HelpModal';
 
 const useStyles = makeStyles((theme) => ({
   main: {
@@ -44,14 +45,35 @@ function MainPage() {
   const [loadingMessage, setLoadingMessage] = useState('');
   const [loadingStep, setLoadingStep] = useState(0);
   const [progress, setProgress] = useState(0);
+  const [helpModalOpen, setHelpModalOpen] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
 
   const handleFileChange = async (event) => {
     const file = event.target.files[0];
     if (file) {
       console.log('파일 이름:', file.name);
+      
+      // 파일 형식 검증
+      const allowedExtensions = ['mp4', 'mkv'];
+      const fileExtension = file.name.split('.').pop().toLowerCase();
+      if (!allowedExtensions.includes(fileExtension)) {
+        setErrorMessage('지원하지 않는 파일 형식입니다. MP4, MKV만 업로드 가능합니다.');
+        setTimeout(() => setErrorMessage(''), 5000);
+        return;
+      }
+      
+      // 파일 크기 검증 (10GB)
+      const maxSize = 10 * 1024 * 1024 * 1024; // 10GB
+      if (file.size > maxSize) {
+        setErrorMessage('파일 크기가 너무 큽니다. 최대 10GB까지 업로드 가능합니다.');
+        setTimeout(() => setErrorMessage(''), 5000);
+        return;
+      }
+      
       setIsLoading(true);
       setLoadingStep(0);
       setProgress(0);
+      setErrorMessage('');
       
       // Step 1: Checking for duplicates
       setLoadingMessage('Checking for duplicate videos...');
@@ -151,8 +173,21 @@ function MainPage() {
         
       } catch (error) {
         setIsLoading(false);
-        setLoadingMessage('Error occurred during processing!');
+        setLoadingMessage('');
         console.error('Error uploading video:', error);
+        
+        // 네트워크 오류 처리
+        if (error.code === 'ERR_NETWORK' || !error.response) {
+          setErrorMessage('업로드 실패. 네트워크 연결을 확인하세요.');
+        } else if (error.response?.status === 400) {
+          setErrorMessage(error.response.data.error || '잘못된 요청입니다.');
+        } else if (error.response?.status === 500) {
+          setErrorMessage('서버 오류가 발생했습니다. 잠시 후 다시 시도해주세요.');
+        } else {
+          setErrorMessage('업로드 중 오류가 발생했습니다.');
+        }
+        
+        setTimeout(() => setErrorMessage(''), 5000);
       }
     }
   };
@@ -215,17 +250,37 @@ function MainPage() {
                 style={{ display: 'none' }}
                 onChange={handleFileChange}
               />
-              <Button
-                variant="contained"
-                color="primary"
-                size="large"
-                startIcon={<UploadIcon />}
-                onClick={triggerFileInput}
-                sx={{ borderRadius: 3, boxShadow: 2, px: 4, py: 1.5 }}
-                disabled={isLoading}
-              >
-                Upload Video
-              </Button>
+              <Box sx={{ display: 'flex', gap: 2 }}>
+                <Button
+                  variant="contained"
+                  color="primary"
+                  size="large"
+                  startIcon={<UploadIcon />}
+                  onClick={triggerFileInput}
+                  sx={{ borderRadius: 3, boxShadow: 2, px: 4, py: 1.5 }}
+                  disabled={isLoading}
+                >
+                  Upload Video
+                </Button>
+                <Button
+                  variant="outlined"
+                  size="large"
+                  startIcon={<HelpIcon />}
+                  onClick={() => setHelpModalOpen(true)}
+                  sx={{ borderRadius: 3, px: 3, py: 1.5 }}
+                >
+                  Help
+                </Button>
+              </Box>
+              
+              {/* 오류 메시지 표시 */}
+              {errorMessage && (
+                <Box sx={{ mt: 2, p: 2, bgcolor: '#ffebee', borderRadius: 2, border: '1px solid #ef5350' }}>
+                  <Typography color="error" variant="body2">
+                    ⚠️ {errorMessage}
+                  </Typography>
+                </Box>
+              )}
             </Box>
             <Box sx={{ flex: 1, display: 'flex', justifyContent: 'center' }}>
               <img
@@ -335,6 +390,9 @@ function MainPage() {
           </Fade>
         )}
       </main>
+      
+      {/* 도움말 모달 */}
+      <HelpModal open={helpModalOpen} onClose={() => setHelpModalOpen(false)} />
     </>
   );
 }

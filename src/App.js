@@ -4,6 +4,7 @@ import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
 import Home from './pages/Home';
 import MainPage from './components/AIVideoEditor';
+import Help from './pages/Help';
 import NotFound from './pages/NotFound';
 
 const theme = createTheme({
@@ -50,6 +51,7 @@ function App() {
         <Routes>
           <Route path="/" element={<MainPage />} />
           <Route path="/edit" element={<Home />} />
+          <Route path="/help" element={<Help />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </Router>

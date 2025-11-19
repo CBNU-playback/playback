@@ -39,9 +39,11 @@ import {
   RadioButtonUnchecked,
   TextFields,
   Slideshow,
+  Help as HelpIcon,
 } from '@mui/icons-material';
 import { styled } from '@mui/material/styles';
 import axios from 'axios';
+import HelpModal from '../components/HelpModal';
 
 
 const CustomSlider = styled(Slider)(({ theme }) => ({
@@ -139,6 +141,7 @@ export default function FootballVideoEditor() {
   const [highlightPages, setHighlightPages] = useState({});
   const [showTextOverlay, setShowTextOverlay] = useState(true); // 텍스트 오버레이 토글 상태
   const [showTransitionEffect, setShowTransitionEffect] = useState(true); // 페이드인아웃 효과 토글 상태
+  const [helpModalOpen, setHelpModalOpen] = useState(false); // 도움말 모달 상태
 
   const [userEdits, setUserEdits] = useState([
     { start: 1800, end: 1830, note: 'Great dribble' },
@@ -370,13 +373,14 @@ export default function FootballVideoEditor() {
     try {
       setIsExporting(true);
       setExportMessage('영상 편집 중입니다. 잠시만 기다려주세요...');
-      // 선택된 하이라이트만 start, end, type, category 추출해서 정렬
+      // 선택된 하이라이트만 start, end, type, category, name 추출해서 정렬
       const sortedHighlights = selectedHighlights
         .map(h => ({ 
           start: h.start, 
           end: h.end, 
           type: h.type || 'Highlight',
-          category: h.category || ''
+          category: h.category || '',
+          ...(h.name && { name: h.name })  // custom highlights의 경우 name 포함
         }))
         .sort((a, b) => a.start - b.start);
       const response = await fetch('http://172.17.174.197:8000/api/export-highlights/', {
@@ -392,9 +396,13 @@ export default function FootballVideoEditor() {
         }),
       });
       if (!response.ok) {
-        setExportMessage('영상 편집에 실패했습니다.');
+        const errorData = await response.json().catch(() => ({}));
+        const errorMsg = errorData.error || '영상 편집에 실패했습니다.';
+        setExportMessage(errorMsg);
         setIsExporting(false);
-        throw new Error('Failed to export video');
+        setTimeout(() => setExportMessage(''), 5000);
+        alert(errorMsg);
+        return;
       }
       const blob = await response.blob();
       
@@ -435,10 +443,22 @@ export default function FootballVideoEditor() {
       window.URL.revokeObjectURL(url);
       setTimeout(() => setExportMessage(''), 3000);
     } catch (error) {
-      setExportMessage('영상 편집에 실패했습니다.');
-      setIsExporting(false);
       console.error('Error exporting highlights:', error);
-      alert('Failed to export highlights. Please try again.');
+      
+      // 네트워크 오류 처리
+      let errorMsg = '영상 편집에 실패했습니다.';
+      if (error.message === 'Failed to fetch' || error.code === 'ERR_NETWORK') {
+        errorMsg = '네트워크 오류가 발생했습니다. 연결을 확인하고 다시 시도해주세요.';
+      } else if (error.response?.status === 500) {
+        errorMsg = '서버에서 영상 처리 중 오류가 발생했습니다.';
+      } else if (error.response?.status === 404) {
+        errorMsg = '원본 영상 파일을 찾을 수 없습니다.';
+      }
+      
+      setExportMessage(errorMsg);
+      setIsExporting(false);
+      setTimeout(() => setExportMessage(''), 5000);
+      alert(errorMsg + ' 다시 시도해주세요.');
     }
   };
 
@@ -458,6 +478,13 @@ export default function FootballVideoEditor() {
 
     if (isNaN(start) || isNaN(end) || start >= end) {
       alert('올바른 시작/종료 시간을 입력하세요. (시작 < 종료)');
+      return;
+    }
+
+    // 영상 길이 확인
+    const videoDuration = videoRef.current?.duration || 0;
+    if (videoDuration > 0 && end > videoDuration) {
+      alert('종료 시간이 영상 길이를 초과합니다.');
       return;
     }
 
@@ -606,8 +633,12 @@ export default function FootballVideoEditor() {
             {isSaving ? '저장 중...' : 'Save'}
           </Button>
           
-          <Button startIcon={<CloudUpload />} onClick={handleNewVideoUploadClick} disabled={isLoading} sx={{ bgcolor: '#111827', color: '#fff', '&:hover': { bgcolor: '#0b1220' } }}>
+          <Button startIcon={<CloudUpload />} onClick={handleNewVideoUploadClick} disabled={isLoading} sx={{ mr: 1, bgcolor: '#111827', color: '#fff', '&:hover': { bgcolor: '#0b1220' } }}>
             Upload New Video
+          </Button>
+          
+          <Button startIcon={<HelpIcon />} onClick={() => setHelpModalOpen(true)} sx={{ bgcolor: '#1976d2', color: '#fff', '&:hover': { bgcolor: '#1565c0' } }}>
+            Help
           </Button>
           {isLoading && (
             <Typography variant="body2" color="primary" sx={{ ml: 2 }}>
@@ -1099,6 +1130,9 @@ export default function FootballVideoEditor() {
           </Box>
         </Box>
       </Modal>
+      
+      {/* 도움말 모달 */}
+      <HelpModal open={helpModalOpen} onClose={() => setHelpModalOpen(false)} />
     </Box>
   );
 }
